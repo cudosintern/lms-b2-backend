@@ -1,0 +1,16 @@
+fastapi
+sqlalchemy
+pydantic
+uvicorn
+passlib
+mysql-connector-python==9.0.0
+python-jose[cryptography]
+python-dotenv
+pycryptodome
+python-multipart
+aiomysql
+reportlab  
+openpyxl
+fpdf
+python-docx
+pydantic[email]

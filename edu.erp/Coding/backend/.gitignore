@@ -1,0 +1,42 @@
+# Python
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg-info/
+*.egg
+dist/
+build/
+*.whl
+
+# Virtual environment
+.env
+env
+fastapi-env/
+env/
+venv/
+.venv/
+ENV/
+env.bak/
+venv.bak/
+.env/
+
+# Jupyter Notebook
+.ipynb_checkpoints
+
+# FastAPI specific
+instance/
+*.sqlite3
+*.db
+
+# IDE and Editor specific
+.vscode/
+.idea/
+*.swp
+*.swo
+*.swn
+
+# OS generated files
+.DS_Store
+Thumbs.db
