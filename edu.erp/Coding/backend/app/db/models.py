@@ -1,11 +1,46 @@
-from sqlalchemy import DECIMAL, Integer, TIMESTAMP, Numeric, PrimaryKeyConstraint, Text, Float, VARBINARY, Column, Integer, SmallInteger, String, Date, ForeignKey, Boolean, CHAR, DateTime, Time, text, Enum
-from sqlalchemy.orm import relationship
+from sqlalchemy import DECIMAL, Integer, TIMESTAMP, Numeric, PrimaryKeyConstraint, Text, Float, VARBINARY, Column, \
+    Integer, SmallInteger, String, Date, ForeignKey, Boolean, CHAR, DateTime, Time, text, Enum, BigInteger
+from sqlalchemy.orm import relationship, synonym
 from sqlalchemy.ext.declarative import declarative_base
+from sqlalchemy.dialects.mysql import MEDIUMINT, TINYINT, YEAR
+
 from datetime import datetime
 from sqlalchemy.sql import func
 import enum
 
-Base = declarative_base()
+from app.core.database import Base
+# Base = declarative_base()
+
+# Ensure PO Type model is imported so its table (`cudos_po_type`) is registered
+from app.api.v1.cudo_module.program_outcome.model.po_type_model import PoType  # noqa: F401
+
+# Fix SQLAlchemy mapper: Import CudosMapCourseToCourseInstructor early for IEMSCourses relationship
+# noqa: F401
+
+
+class OrgMainOccasionType(Base):
+    __tablename__ = 'cudos_org_main_occasion_type'
+
+    mot_id = Column(Integer, primary_key=True, autoincrement=True)
+    mot_name = Column(String(150), nullable=False, unique=True)
+    mot_description = Column(String(500), nullable=True)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class OrgSubOccasionType(Base):
+    __tablename__ = 'cudos_org_sub_occasion_type'
+
+    sot_id = Column(Integer, primary_key=True, autoincrement=True)
+    mot_id = Column(Integer, ForeignKey('cudos_org_main_occasion_type.mot_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=False)
+    sot_name = Column(String(150), nullable=False)
+    sot_description = Column(String(500), nullable=True)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
 
 
 class Caste(Base):
@@ -62,12 +97,12 @@ class IEMSAcademicBatch(Base):
 
     academic_batch_id = Column(Integer, primary_key=True, autoincrement=True)
     academic_batch_code = Column(String(25), nullable=False)
-    academic_batch_desc = Column(String(50), nullable=False)
+    academic_batch_desc = Column(String(255), nullable=False)
     academic_year = Column(String(45), nullable=True)
     regulation_year = Column(String(45), nullable=True)
     program_duration = Column(Integer, nullable=True)
-    dept_id = Column(Integer, nullable=False)
-    pgm_id = Column(Integer, nullable=False)
+    dept_id = Column(Integer, ForeignKey('iems_department.dept_id'), nullable=False)
+    pgm_id = Column(Integer, ForeignKey('iems_program.pgm_id'), nullable=False)
     org_id = Column(Integer, nullable=True)
     total_credits = Column(Integer, default=0)
     lateral_entry_credits = Column(Integer, default=0)
@@ -78,6 +113,23 @@ class IEMSAcademicBatch(Base):
     modify_date = Column(DateTime, nullable=True)
     grade_type = Column(String(100), nullable=True)
     is_tw_course = Column(Integer, default=0)
+    # missing data added
+    start_year = Column(Integer, nullable=False)
+    end_year = Column(Integer, nullable=False)
+    total_terms = Column(Integer, nullable=False)
+    academic_batch_owner = Column(Integer, ForeignKey('iems_users.id'), nullable=False)
+
+    cia_passing_marks = Column(Float, default=0)
+    tee_passing_marks = Column(Float, default=0)
+
+    import_ref_crclm_id = Column(Integer)
+    import_type = Column(Integer)
+
+    #ADD RELATIONSHIPS
+    program = relationship("IEMProgram", foreign_keys=[pgm_id], backref="academic_batches")
+    owner = relationship("IEMSUsers", foreign_keys=[academic_batch_owner])
+    department = relationship("IEMSDepartment", foreign_keys=[dept_id])
+
 
 
 class IEMSActivityStatusMgmt(Base):
@@ -161,28 +213,57 @@ class IEMSAppVersion(Base):
     file_path = Column(String(200), nullable=True)
 
 
+# class AssessmentOccasions(Base):
+#     __tablename__ = 'assessment_occasions'
+
+#     ao_id = Column(Integer, primary_key=True, autoincrement=True)
+#     ao_name = Column(String(100), nullable=True)
+#     ao_description = Column(String(500), nullable=True)
+#     academic_batch_id = Column(Integer, nullable=True)
+#     semester_id = Column(Integer, nullable=True)
+#     created_by = Column(Integer, nullable=True)
+#     created_date = Column(Date, nullable=True)
+
+
 class IEMSAssessmentOccasions(Base):
     __tablename__ = 'iems_assessment_occasions'
 
     ao_id = Column(Integer, primary_key=True, autoincrement=True)
-    cia_occasion_type_id = Column(Integer, nullable=True)
-    ise_mse_type_id = Column(Integer, default=1)
+    mte_flag = Column(Boolean, nullable=True, default=False)
+    qpd_id = Column(Integer, nullable=True)
+    cia_occasion_type_id = Column(Integer, ForeignKey('iems_cia_occasion_type.cia_occasion_type_id'), nullable=True)
+    ise_mse_type_id = Column(Integer, ForeignKey('iems_ise_mse_type.ise_mse_type_id'), nullable=True, default=None)
     cia_occasion = Column(String(15), nullable=False)
+    ao_sl_no = Column(String(100), nullable=False)
+    ao_name = Column(String(2000), nullable=False)
+    ao_method_id = Column(Integer, nullable=False, default=0)
+    ao_type_id = Column(Integer, nullable=False, default=0)
     max_marks = Column(Integer, nullable=False)
-    min_marks = Column(Integer, nullable=False)
+    avg_cia_marks = Column(Float, nullable=True)
+    min_marks = Column(Integer, nullable=False, default=0)
     crs_code = Column(String(15), nullable=False)
     weightage = Column(String(45), nullable=False)
-    bestof = Column(Boolean, nullable=False)
+    bestof = Column(Boolean, nullable=False, default=False)
     result_year = Column(Date, nullable=True)
     cia_master_id = Column(Integer, nullable=True)
     cia_map_id = Column(Integer, nullable=True)
-    org_id = Column(Integer, nullable=False)
-    status = Column(Integer, nullable=False)
-    created_by = Column(Integer, nullable=False)
-    modified_by = Column(Integer, nullable=False)
-    create_date = Column(DateTime, nullable=False)
-    modify_date = Column(DateTime, nullable=False)
-
+    org_id = Column(Integer, nullable=False, default=1)
+    status = Column(Integer, nullable=False, default=1)
+    created_by = Column(Integer, nullable=False, default=1)
+    modified_by = Column(Integer, nullable=False, default=1)
+    create_date = Column(DateTime, nullable=False, default=datetime.now)
+    modify_date = Column(DateTime, nullable=False, default=datetime.now)
+    academic_batch_id = Column(Integer, nullable=False, default=0)
+    semester_id = Column(Integer, nullable=False, default=0)
+    crs_id = Column(Integer, nullable=False, default=0)
+    section_id = Column(Integer, nullable=True)
+    rubrics_qp_status = Column(Boolean, nullable=True)
+    import_ref_ao_id = Column(Integer, nullable=True)
+    direct_method = Column(Integer, nullable=False, default=1)
+    co_indirect_weightage = Column(Integer, nullable=True)
+    cmot_id = Column(Integer, nullable=True)
+    sot_id = Column(Integer, nullable=True)
+    
 
 class IEMSAttendanceTable(Base):
     __tablename__ = 'iems_attandance_table'
@@ -711,7 +792,7 @@ class IEMSCourses(Base):
     academic_year = Column(String(4), nullable=False)
     crs_title = Column(String(255), nullable=True)
     department_id = Column(Integer, nullable=True)  # UNSIGNED
-    program_id = Column(Integer, nullable=True)  # UNSIGNED
+    program_id = Column(Integer, ForeignKey('iems_program.pgm_id'))  # UNSIGNED
     academic_batch_id = Column(Integer, nullable=False)
     course_type_id = Column(Integer, nullable=False)  # UNSIGNED
     batch_cycle_id = Column(Integer, default=3)  # UNSIGNED
@@ -738,6 +819,83 @@ class IEMSCourses(Base):
     modified_by = Column(Integer, nullable=True)
     create_date = Column(DateTime, nullable=True)
     modify_date = Column(DateTime, nullable=True)
+    # -------------------- NEW FIELDS --------------------
+
+    hm_crs_branch_id = Column(Integer, nullable=True)  # new field
+
+    crs_mode = Column(Integer, nullable=False, default=0)  # new field
+    crs_acronym = Column(String(30), nullable=True)  # new field
+    crs_domain_id = Column(Integer, nullable=True)  # new field
+
+    lect_credits = Column(Float, nullable=True)  # new field
+    tutorial_credits = Column(Float, nullable=True)  # new field
+    practical_credits = Column(Float, nullable=True)  # new field
+    self_study_credits = Column(Float, nullable=True)  # new field
+    total_credits = Column(Float, nullable=True)  # new field
+
+    cia_flag = Column(Integer, default=0)  # new field
+    mte_flag = Column(Integer, default=0)  # new field
+    tee_flag = Column(Integer, default=0)  # new field
+    mte_weightage = Column(Float, default=0.00)  # new field
+
+    contact_hours = Column(Float, nullable=True)  # new field
+    mid_term_marks = Column(Float, nullable=True)  # new field
+    attendance_marks = Column(Float, default=0)  # new field
+    ss_marks = Column(Float, default=0)  # new field
+    total_marks = Column(Float, nullable=True)  # new field
+    see_duration = Column(String(4), nullable=True)  # new field
+
+    cognitive_domain_flag = Column(Integer, nullable=True)  # new field
+    affective_domain_flag = Column(Integer, nullable=True)  # new field
+    psychomotor_domain_flag = Column(Integer, nullable=True)  # new field
+
+    state_id = Column(Integer, default=1)  # new field
+    topic_publish_flag = Column(Integer, default=0)  # new field
+    target_status = Column(Integer, default=1)  # new field
+    target_comment = Column(Text, nullable=True)  # new field
+
+    cia_course_minthreshhold = Column(Integer, nullable=True)  # new field
+    mte_course_minthreshhold = Column(Integer, nullable=True)  # new field
+    tee_course_minthreshhold = Column(Integer, nullable=True)  # new field
+    course_studentthreshhold = Column(Integer, nullable=True)  # new field
+    justify = Column(String(1000), nullable=True)  # new field
+
+    clo_bl_flag = Column(Integer, nullable=False, default=0)  # new field
+    edu_sys_flag = Column(Integer, default=0)  # new field
+    total_stud_enroll = Column(Integer, nullable=True)  # new field
+    reg_start_date = Column(DateTime, nullable=True)  # new field
+    reg_end_date = Column(DateTime, nullable=True)  # new field
+
+    crs_attainment_finalize_flag = Column(Integer, nullable=False, default=0)  # new field
+    crs_stud_reg_flag = Column(Integer, nullable=False, default=0)  # new field
+    sec_stud_reg_flag = Column(Integer, nullable=False, default=0)  # new field
+    crs_mte_finalize_flag = Column(Integer, nullable=False, default=0)  # new field
+
+    import_ref_crs_id = Column(Integer, nullable=True)  # new field
+    elective_crs_flag = Column(Integer, default=0)  # new field
+    co_attainment_observation = Column(Text, nullable=True)  # new field
+    co_attainment_action_plan = Column(Text, nullable=True)  # new field
+    co_attainment_hod_remarks = Column(Text, nullable=True)  # new field
+    crs_bl_sugg_flag = Column(Integer, nullable=False, default=1)  # new field
+
+    cia_course_target = Column(Integer, nullable=True)  # new field
+    mte_course_target = Column(Integer, nullable=True)  # new field
+    tee_course_target = Column(Integer, nullable=True)  # new field
+
+    tutorial = Column(Integer, default=0)  # new field
+    indirect_flag = Column(Integer, nullable=False, default=0)  # new field
+    direct_percentage = Column(Integer, nullable=True)  # new field
+    indirect_percentage = Column(Integer, nullable=True)  # new field
+    avg_flag = Column(Integer, default=0)  # new field
+
+    lms_topic_import_type_flag = Column(Integer, default=1)  # new field
+    finalize_and_ready_for_ems_flag = Column(Integer, default=0)  # new field
+    crs_assessment_flag = Column(Integer, default=0)  # new field
+    lms_crs_attendance_finalize = Column(Integer, default=0)  # new field
+    crs_ovrl_cia_finalise_flag = Column(Integer, default=0)  # new field
+
+    # Course-Instructor Mapping
+    instructors = relationship("CudosMapCoursetoCourseInstructor", back_populates="course")
 
 
 class IEMSCourseMappingTable(Base):
@@ -888,6 +1046,8 @@ class IEMSDepartment(Base):
     modified_by = Column(Integer, nullable=True)  # mediumint(8) UNSIGNED
     create_date = Column(Date, nullable=True)
     modify_date = Column(Date, nullable=True)
+
+    programs = relationship("IEMProgram", back_populates="department")
 
 
 class IEMSEducationQualificationMaster(Base):
@@ -2207,8 +2367,8 @@ class IEMProgram(Base):
     pgm_title = Column(String(100), nullable=False)
     pgm_acronym = Column(String(250), nullable=False)
     pgm_specialization = Column(String(250), nullable=True)
-    dept_id = Column(Integer, nullable=False)
-    pgmtype_id = Column(Integer, nullable=False)
+    dept_id = Column(Integer, ForeignKey('iems_department.dept_id'), nullable=False)
+    pgmtype_id = Column(Integer, ForeignKey('iems_program_type.pgmtype_id'), nullable=False)
     status = Column(SmallInteger, default=1)
     org_id = Column(Integer, nullable=False)
     created_by = Column(Integer, nullable=True)
@@ -2217,6 +2377,14 @@ class IEMProgram(Base):
     modify_date = Column(Date, nullable=True)
     total_credits = Column(Integer, nullable=False)
     lateral_entry_credits = Column(Integer, nullable=False)
+    total_terms = Column(Integer, nullable=True)
+    term_min_credits = Column(Integer, nullable=True)
+    term_max_credits = Column(Integer, nullable=True)
+    term_min_duration = Column(Integer, nullable=True)
+    term_max_duration = Column(Integer, nullable=True)
+
+    department = relationship("IEMSDepartment", back_populates="programs")
+    curriculums = relationship("Curriculum", back_populates="program")
 
 
 class IEMProgramType(Base):
@@ -2333,6 +2501,17 @@ class IEMSemester(Base):
     modify_date = Column(DateTime, nullable=True)
     sem_min_credits = Column(Integer, nullable=True)
     sem_max_credits = Column(Integer, nullable=True)
+    term_name = Column(String(50), nullable=True)
+    semester_duration = Column(Integer, nullable=True)
+    total_theory_courses = Column(Integer, nullable=True)
+    total_practical_courses = Column(Integer, nullable=True)
+    academic_start_year = Column(Integer, nullable=True)
+    academic_end_year = Column(Integer, nullable=True)
+    enroll_start_date = Column(DateTime, nullable=True)
+    enroll_start_time = Column(String(50), nullable=False, default='00:00:00')
+    enroll_end_date = Column(Date, nullable=False)
+    enroll_end_time = Column(String(50), nullable=False, default='00:00:00')
+    unit_id = Column(Integer, nullable=False, default=3)
 
 
 class IEMSemTimeTable(Base):
@@ -2757,8 +2936,8 @@ class IEMSUsers(Base):
     active = Column(Integer, nullable=True)
 
     title = Column(String(8), nullable=True)
-    first_name = Column(String(50), nullable=True)
-    middle_name = Column(String(50), nullable=True)
+    first_name = Column(String(50), nullable=True) 
+    middle_name = Column(String(50), nullable=True) # Not present in the original table, but can be added if needed
     last_name = Column(String(50), nullable=True)
 
     org_id = Column(Integer, nullable=True)
@@ -2781,6 +2960,7 @@ class IEMSUsers(Base):
     mobile = Column(String(10), nullable=True)
 
     forgot_password_check = Column(Boolean, nullable=True)
+
     master_password = Column(Text, nullable=True)
 
     alertnative_email = Column(String(50), nullable=True)
@@ -2855,6 +3035,13 @@ class IEMSUsers(Base):
     fp_accessed = Column(Date, nullable=True)
     fp_security_attempts = Column(Boolean, nullable=True)
 
+    curriculums = relationship("Curriculum", foreign_keys="Curriculum.crclm_owner", back_populates="owner")
+
+    # Course-Instructor Mapping
+    assigned_courses = relationship(
+    "CudosMapCoursetoCourseInstructor",
+    back_populates="instructor"
+)
 
 
 class IEMSUserCourseMgmt(Base):
@@ -3818,6 +4005,38 @@ class ErpMasterType(Base):
     status = Column(SmallInteger, default=1, nullable=False)
 
 
+class MasterType(Base):
+    __tablename__ = 'cudos_master_type'
+
+    master_type_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    master_type_name = Column(String(100), nullable=False)
+    master_type_alias_name = Column(String(100), nullable=True)
+
+
+
+class MasterTypeDetails(Base):
+    __tablename__ = 'cudos_master_type_details'
+
+    mt_details_id = Column(Integer, primary_key=True, index=True, autoincrement=True)
+    master_type_id = Column(Integer, ForeignKey('cudos_master_type.master_type_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=False)
+    mt_details_name = Column(String(100), nullable=False)
+    org_type = Column(Integer, nullable=True)
+    parent_id = Column(Integer, default=0)
+    master_type_details_alias_name = Column(String(100), nullable=True)
+    mt_details_name_desc = Column(String(500), nullable=True)
+    mtd_status = Column(SmallInteger, default=1, nullable=False)
+    created_by = Column(Integer, nullable=True)
+    created_date = Column(TIMESTAMP, server_default=func.current_timestamp())
+    modified_by = Column(Integer, nullable=True)
+    modified_date = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+    # Aliases for Lab Category Compatibility
+    lab_cat_id = synonym("mt_details_id")
+    lab_cat_name = synonym("mt_details_name")
+    lab_cat_description = synonym("mt_details_name_desc")
+    status = synonym("mtd_status")
+
+
 class HMSWing(Base):
     __tablename__ = "hms_wing"
 
@@ -4012,8 +4231,6 @@ class StudentPayment(Base):
     room_allotment = relationship("StudentRoomAllotment", backref="student_payment")
 
 
-
-
 # class CudosMapLevelWeightage(Base):
 #     __tablename__ = "cudos_map_level_weightage"
 
@@ -4042,6 +4259,180 @@ class BloomLevel(Base):
     modified_by = Column(Integer, nullable=True)
     created_date = Column(DateTime, default=func.current_timestamp())
     modified_date = Column(DateTime, default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+
+class BloomDomain(Base):
+    __tablename__ = 'cudos_bloom_domain'
+
+    bld_id = Column(Integer, primary_key=True, autoincrement=True)
+    bld_name = Column(String(100), nullable=False)
+    bld_acronym = Column(String(50), nullable=False)
+    bld_description = Column(Text, nullable=True)
+    status = Column(Integer, default=1)
+    bld_code = Column(Integer, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    create_date = Column(DateTime, default=func.current_timestamp())
+    modify_date = Column(DateTime, default=func.current_timestamp(), onupdate=func.current_timestamp())
+
+
+# Backward-compatible alias used by older bloom level code.
+CudosBloomDomain = BloomDomain
+
+
+class CudosDeliveryMethod(Base):
+    __tablename__ = 'cudos_delivery_method'
+
+    delivery_mtd_id = Column(Integer, primary_key=True, autoincrement=True)
+    delivery_mtd_name = Column(String(800), nullable=False)
+    delivery_mtd_desc = Column(String(2000))
+    status = Column(Integer, nullable=False, default=1)
+    created_by = Column(Integer)
+    created_date = Column(Date)
+    modified_by = Column(Integer)
+    modified_date = Column(Date)
+
+
+class CudosPoPeoMap(Base):
+    __tablename__ = 'cudos_po_peo_map'
+
+    pp_id = Column(Integer, primary_key=True, autoincrement=True)
+    peo_id = Column(Integer, nullable=False)
+    po_id = Column(Integer, nullable=False)
+    academic_batch_id = Column(Integer, nullable=False)
+    map_level = Column(String(15), nullable=True)
+    justification = Column(Text, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    modified_date = Column(Date, nullable=True, default=func.current_date(), onupdate=func.current_date())
+    created_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True, default=func.current_date())
+
+
+class CudosTopic(Base):
+    __tablename__ = 'cudos_topic'
+    __table_args__ = {"extend_existing": True}
+
+    topic_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    topic_code = Column(String(10), nullable=True)
+    topic_title = Column(String(500), nullable=False)
+    t_unit_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    topic_content = Column(Text, nullable=True)
+    topic_hrs = Column(String(8), nullable=True)
+    num_of_sessions = Column(Float, nullable=True)
+    marks_expt = Column(Float, nullable=True)
+    correlation_with_theory = Column(String(200), nullable=True)
+    conduction_date = Column(Date, nullable=True)
+    actual_delivery_date = Column(Date, nullable=True)
+    category_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    academic_batch_id = Column(Integer, nullable=False)
+    semester_id = Column(Integer, nullable=False)
+    crs_id = Column(Integer, nullable=False)
+    state_id = Column(Integer, nullable=True, default=1)
+    created_by = Column(Integer, nullable=False)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=False)
+    modified_date = Column(Date, nullable=True)
+    import_ref_topic_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+
+class CudosTopicDeliveryMethod(Base):
+    __tablename__ = 'cudos_topic_delivery_method'
+
+    topic_dm_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    topic_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    delivery_mtd_id = Column(Integer, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class CudosTlo(Base):
+    __tablename__ = 'cudos_tlo'
+
+    tlo_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    tlo_code = Column(String(20), nullable=True)
+    tlo_statement = Column(Text, nullable=True)
+    academic_batch_id = Column(Integer, nullable=False)
+    semester_id = Column(Integer, nullable=False)
+    crs_id = Column(Integer, nullable=False)
+    topic_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    bloom_level = Column(String(100), nullable=True)
+    delivery_method = Column(String(255), nullable=True)
+    delivery_approach = Column(Text, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+    state_id = Column(Integer, nullable=True, default=1)
+
+
+class CudosTloCloMap(Base):
+    __tablename__ = 'cudos_tlo_clo_map'
+
+    tlo_map_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    tlo_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    clo_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    outcome_element = Column(MEDIUMINT(unsigned=True), nullable=True)
+    pi = Column(MEDIUMINT(unsigned=True), nullable=True)
+    pi_codes = Column(String(10), nullable=True)
+    justification = Column(Text, nullable=True)
+    academic_batch_id = Column(Integer, nullable=False)
+    semester_id = Column(Integer, nullable=True)
+    crs_id = Column(Integer, nullable=False)
+    topic_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class CudosTopicLessonSchedule(Base):
+    __tablename__ = 'cudos_topic_lesson_schedule'
+
+    lesson_schedule_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    portion_ref = Column(String(8), nullable=True)
+    portion_per_hour = Column(String(2000), nullable=False)
+    academic_batch_id = Column(Integer, nullable=False)
+    semester_id = Column(Integer, nullable=True)
+    crs_id = Column(Integer, nullable=False)
+    topic_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+    conduction_date = Column(Date, nullable=True)
+    actual_delivery_date = Column(Date, nullable=True)
+
+
+class CudosAssessmentMethod(Base):
+    __tablename__ = 'cudos_assessment_methods'
+
+    assess_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    assess_name = Column(String(500), nullable=True)
+    bloom_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+
+
+class CudosTopicQuestion(Base):
+    __tablename__ = 'cudos_topic_question'
+
+    question_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    review_question = Column(Text, nullable=True)
+    assignment_question = Column(Text, nullable=True)
+    academic_batch_id = Column(Integer, nullable=False)
+    semester_id = Column(Integer, nullable=False)
+    crs_id = Column(Integer, nullable=False)
+    topic_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    tlo_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    bloom_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    pi_codes = Column(String(10), nullable=True)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+    que_id = Column(String(20), nullable=True)
+
+
 class CudosMapLevelWeightage(Base):
     __tablename__ = 'cudos_map_level_weightage'
 
@@ -4056,8 +4447,8 @@ class CudosMapLevelWeightage(Base):
     created_date = Column(Date, nullable=True)
     modified_by = Column(Integer, nullable=True)
     modified_date = Column(Date, nullable=True)
-    
-    
+
+
 class CUDOSBoS(Base):
     __tablename__ = "cudos_bos"
 
@@ -4070,7 +4461,7 @@ class CUDOSBoS(Base):
 
     create_date = Column(Date, nullable=True)
     modify_date = Column(Date, nullable=True)
-    
+
 
 # class AccreditationType(Base):
 #     __tablename__ = "cudos_accreditation_type"
@@ -4110,6 +4501,7 @@ class IEMSProgramMode(Base):
     prg_mode_code = Column(String(50), nullable=False)
     status = Column(Integer, default=1)
 
+
 class CudosProgramKnowledgeProfile(Base):
     __tablename__ = "cudos_pgm_knowledge_profiles"
 
@@ -4136,8 +4528,26 @@ class AccreditationType(Base):
     modified_by = Column(Integer, nullable=True)
     created_date = Column(DateTime, nullable=True, default=func.now())
     modified_date = Column(DateTime, nullable=True, default=func.now(), onupdate=func.now())
-    
-    pos = relationship("PO", back_populates="accreditation_type", cascade="all, delete-orphan")
+
+    details = relationship("AccreditationTypeDetails", back_populates="accreditation_type",
+                           cascade="all, delete-orphan")
+
+
+class AccreditationTypeDetails(Base):
+    __tablename__ = 'cudos_accreditation_type_details'
+
+    atype_details_id = Column(MEDIUMINT(8), primary_key=True, autoincrement=True)
+    atype_id = Column(Integer, ForeignKey("cudos_accreditation_type.atype_id"), nullable=False)
+    atype_details_name = Column(String(100), nullable=False)
+    atype_details_description = Column(String(2000), nullable=False)
+    po_type_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    po_code = Column(String(10), nullable=False)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+    accreditation_type = relationship("AccreditationType", back_populates="details")
 
 
 class PO(Base):
@@ -4149,7 +4559,8 @@ class PO(Base):
     pso_flag = Column(Boolean, default=False)
     po_statement = Column(String(2000), nullable=False)
     po_type_id = Column(Integer, nullable=True)
-    crclm_id = Column(Integer, nullable=False)
+    # link to academic batch (replaces legacy crclm_id)
+    academic_batch_id = Column(Integer, nullable=True)
     state_id = Column(Integer, nullable=True)
     create_date = Column(DateTime, nullable=True, default=func.now())
     created_by = Column(Integer, nullable=True)
@@ -4162,27 +4573,37 @@ class PO(Base):
     direct_attainment = Column(Integer, nullable=True)
     indirect_attainment = Column(Integer, nullable=True)
     extra_curricular = Column(Integer, nullable=True)
-    
+    # Added academic_batch_id
+    academic_batch_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    # Removed atype_id to match existing database schema
+    # atype_id = Column(Integer, ForeignKey("cudos_accreditation_type.atype_id"), nullable=True)
+
     # Intentionally adding atype_id to match UI requirement to link PO to AccreditationType
     # This assumes the column exists or will be added to the table
-    atype_id = Column(Integer, ForeignKey("cudos_accreditation_type.atype_id"), nullable=True)
-    
-    accreditation_type = relationship("AccreditationType", back_populates="pos")
+    # atype_id = Column(Integer, ForeignKey("cudos_accreditation_type.atype_id"), nullable=True)
+
+    # accreditation_type = relationship("AccreditationType", back_populates="pos")
 
 
 class CurriculumDeliveryMethod(Base):
     __tablename__ = 'cudos_map_crclm_deliverymethod'
 
     crclm_dm_id = Column(Integer, primary_key=True, autoincrement=True)
-    crclm_id = Column(Integer, nullable=True) # Link to Curriculum
-    crs_id = Column(Integer, nullable=True)   # Link to Course
+    academic_batch_id = Column(Integer, nullable=True)
+    crs_id = Column(Integer, nullable=True)
     delivery_mtd_name = Column(String(100), nullable=True)
     delivery_mtd_desc = Column(String(800), nullable=True)
-    
+
     created_by = Column(Integer, nullable=True)
     modified_by = Column(Integer, nullable=True)
     created_date = Column(Date, default=func.current_date())
     modified_date = Column(Date, default=func.current_date(), onupdate=func.current_date())
+    import_ref_crclm_dm_id = Column(Integer, nullable=True)
+
+
+CudosCurriculumDeliveryMethod = CurriculumDeliveryMethod
+CudosMapCrclmDeliveryMethod = CurriculumDeliveryMethod
+
 
 class CurriculumDeliveryBloom(Base):
     __tablename__ = 'cudos_map_crclm_dm_bloomlevel'
@@ -4196,9 +4617,1128 @@ class CurriculumDeliveryBloom(Base):
     created_date = Column(Date, default=func.current_date())
     modified_date = Column(Date, default=func.current_date(), onupdate=func.current_date())
 
+
+CudosMapCrclmDmBloomlevel = CurriculumDeliveryBloom
+
+
+# class Curriculum(Base):
+#     __tablename__ = "curriculum"
+
+#     crclm_id = Column(Integer, primary_key=True, index=True)
+#     crclm_name = Column(String(255))
+#     status = Column(Integer, default=1)
+
+
+# class Curriculum(Base):
+#     __tablename__ = "curriculum"
+
+#     crclm_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+
+#     crclm_name = Column(String(100), nullable=False)
+#     crclm_description = Column(String(2000), nullable=False)
+
+#     start_year = Column(YEAR, nullable=False)
+#     end_year = Column(YEAR, nullable=False)
+
+#     total_credits = Column(Float, nullable=False, default=0)
+#     total_terms = Column(Integer, nullable=False, default=0)
+
+#     crclm_owner = Column(MEDIUMINT(unsigned=True), nullable=False)
+#     cia_passing_marks = Column(Float, nullable=True, default=0)
+#     tee_passing_marks = Column(Float, nullable=True, default=0)
+
+#     crclm_release_status = Column(TINYINT, default=0)
+#     pgm_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+
+#     first_year_flag = Column(TINYINT, default=0)
+#     status = Column(TINYINT, default=1)
+
+#     create_date = Column(Date)
+#     created_by = Column(MEDIUMINT(unsigned=True))
+
+#     modify_date = Column(Date)
+#     modified_by = Column(MEDIUMINT(unsigned=True))
+
+#     import_ref_crclm_id = Column(MEDIUMINT(unsigned=True))
+#     import_type = Column(TINYINT)
+
+
 class Curriculum(Base):
     __tablename__ = "curriculum"
 
-    crclm_id = Column(Integer, primary_key=True, index=True)
-    crclm_name = Column(String(255))
+    crclm_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+
+    crclm_name = Column(String(100), nullable=False)
+    crclm_description = Column(String(2000), nullable=False)
+
+    start_year = Column(YEAR, nullable=False)
+    end_year = Column(YEAR, nullable=False)
+
+    total_credits = Column(Float, nullable=False, default=0)
+    total_terms = Column(Integer, nullable=False, default=0)
+
+    # ✅ FIX HERE
+    crclm_owner = Column(
+        MEDIUMINT(unsigned=True),
+        ForeignKey("iems_users.id"),
+        nullable=False
+    )
+
+    # ✅ FIX HERE
+    pgm_id = Column(
+        MEDIUMINT(unsigned=True),
+        ForeignKey("iems_program.pgm_id"),
+        nullable=False
+    )
+
+    cia_passing_marks = Column(Float, nullable=True, default=0)
+    tee_passing_marks = Column(Float, nullable=True, default=0)
+
+    crclm_release_status = Column(TINYINT, default=0)
+    first_year_flag = Column(TINYINT, default=0)
+    status = Column(TINYINT, default=1)
+
+    create_date = Column(Date)
+    created_by = Column(MEDIUMINT(unsigned=True))
+
+    modify_date = Column(Date)
+    modified_by = Column(MEDIUMINT(unsigned=True))
+
+    import_ref_crclm_id = Column(MEDIUMINT(unsigned=True))
+    import_type = Column(TINYINT)
+
+    # ✅ ADD RELATIONSHIPS
+    program = relationship("IEMProgram", back_populates="curriculums")
+    owner = relationship("IEMSUsers", foreign_keys=[crclm_owner], back_populates="curriculums")
+
+
+class CudosPeo(Base):
+    __tablename__ = 'cudos_peo'
+
+    peo_id = Column(Integer, primary_key=True, autoincrement=True)
+    peo_reference = Column(String(10), nullable=True)
+    peo_statement = Column(String(2000), nullable=False)
+    peo_type_id = Column(Integer, ForeignKey('cudos_po_type.po_type_id'), nullable=True)
+    # Re-added state_id (required): keeps previous default behavior
+    state_id = Column(Integer, nullable=False, default=1)
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id'), nullable=False)
+    created_date = Column(Date, nullable=True)
+    created_by = Column(Integer, ForeignKey('iems_users.id'), nullable=True)
+    modify_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, ForeignKey('iems_users.id'), nullable=True)
+    import_ref_peo_id = Column(Integer, nullable=True)
+
+    academic_batch = relationship('IEMSAcademicBatch',
+                                  primaryjoin='IEMSAcademicBatch.academic_batch_id==CudosPeo.academic_batch_id',
+                                  viewonly=True)
+
+    # Optional relationship for convenience
+    # curriculum = relationship('Curriculum', primaryjoin='Curriculum.crclm_id==CudosPeo.crclm_id', viewonly=True)
+
+
+class CudosPerformanceIndicator(Base):
+    """Corresponds to Competency"""
+    __tablename__ = 'cudos_performance_indicator'
+
+    pi_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    pi_statement = Column(String(2000), nullable=False)
+    po_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    created_by = Column(Integer)  # unsigned int(10)
+    modified_by = Column(Integer)
+    create_date = Column(Date)
+    modify_date = Column(Date)
+    import_ref_pi_id = Column(MEDIUMINT(unsigned=True))
+
+
+class CudosMeasure(Base):
+    """Corresponds to Performance Indicator (PI)"""
+    __tablename__ = 'cudos_measures'
+
+    msr_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    msr_statement = Column(Text, nullable=False)
+    pi_id = Column(MEDIUMINT(unsigned=True),
+                   ForeignKey('cudos_performance_indicator.pi_id', ondelete='CASCADE', onupdate='CASCADE'),
+                   nullable=False)
+    pi_codes = Column(String(10))
+    import_ref_msr_id = Column(MEDIUMINT(unsigned=True))
+
+    measure = relationship(
+        "CudosPerformanceIndicator",
+        primaryjoin="CudosMeasure.pi_id==CudosPerformanceIndicator.pi_id",
+        foreign_keys=[pi_id],
+        viewonly=True,
+    )
+
+
+class CudosComment(Base):
+    """BOS Comments"""
+    __tablename__ = 'cudos_comment'
+
+    comment_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    entity_id = Column(MEDIUMINT(unsigned=True))
+    actual_id = Column(MEDIUMINT(unsigned=True))
+    po_id = Column(MEDIUMINT(unsigned=True))
+    clo_id = Column(MEDIUMINT(unsigned=True))
+    crclm_id = Column(MEDIUMINT(unsigned=True))
+    cmt_statement = Column(String(2000))
+    status = Column(TINYINT)
+    commented_by = Column(MEDIUMINT(unsigned=True))
+    in_reply_to = Column(MEDIUMINT(unsigned=True))
+    created_by = Column(Integer)  # unsigned int(10)
+    modified_by = Column(Integer)
+    created_date = Column(DateTime)
+    modified_date = Column(DateTime)
+
+
+class CudosWorkflowState(Base):
+    __tablename__ = 'cudos_workflow_state'
+
+    state_id = Column(Integer, primary_key=True, autoincrement=True)
+    status = Column(String(50), nullable=False)
+    alias_name = Column(String(100))
+    created_by = Column(MEDIUMINT(unsigned=True), nullable=False)
+    modified_by = Column(MEDIUMINT(unsigned=True), nullable=False)
+    created_date = Column(Date)
+    modified_date = Column(Date)
+    percent = Column(Integer, nullable=False)  # unsigned int(5)
+
+
+class CudosPeoPoApprover(Base):
+    __tablename__ = "cudos_peo_po_approver"
+
+    aid = Column(Integer, primary_key=True, autoincrement=True)
+
+    entity_id = Column(Integer, nullable=False)
+
+    academic_batch_id = Column(
+        Integer,
+        ForeignKey("iems_academic_batch.academic_batch_id"),
+        nullable=True
+    )
+
+    approver_id = Column(
+        Integer,
+        ForeignKey("iems_users.id"),
+        nullable=False
+    )
+
+    dept_id = Column(
+        Integer,
+        ForeignKey("iems_department.dept_id"),
+        nullable=False
+    )
+
+    last_date = Column(Date, nullable=False)
+
+    created_by = Column(
+        Integer,
+        ForeignKey("iems_users.id"),
+        nullable=True
+    )
+
+    modified_by = Column(
+        Integer,
+        ForeignKey("iems_users.id"),
+        nullable=True
+    )
+
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class CudosEntity(Base):
+    __tablename__ = 'cudos_entity'
+
+    entity_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    entity_name = Column(String(50), nullable=False)
+    alias_entity_name = Column(String(60), nullable=False)
+    order_by = Column(MEDIUMINT(unsigned=True))
+    display = Column(MEDIUMINT(8))
+    help_display = Column(MEDIUMINT(8), nullable=False)
+    history_display = Column(MEDIUMINT(unsigned=True))
+    import_display = Column(TINYINT(2))
+    import_dipendency = Column(TINYINT(2))
+    qpf_config = Column(MEDIUMINT(8))
+    qpf_config_orderby = Column(MEDIUMINT(8))
+    skip_approval = Column(TINYINT(unsigned=True), default=0)
+    skip_review = Column(TINYINT(unsigned=True), default=0)
+    created_by = Column(Integer, nullable=False)
+    modified_by = Column(Integer, nullable=False)
+    created_date = Column(Date, nullable=False)
+    modified_date = Column(Date, nullable=False)
+    synch_entity = Column(TINYINT(unsigned=True), default=0)
+    synch_entity_order = Column(TINYINT(unsigned=True), default=0)
+
+
+class CudosCourseCloValidator(Base):
+    __tablename__ = 'cudos_course_clo_validator'
+
+    vid = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id'), nullable=False)
+    semester_id = Column(Integer, nullable=False)
+    crs_id = Column(Integer, nullable=False)
+    validator_id = Column(Integer)
+    last_date = Column(Date, nullable=False)
+    dept_id = Column(Integer, nullable=False)
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+    created_date = Column(Date)
+    modified_date = Column(Date)
+    academic_batch = relationship('IEMSAcademicBatch',
+                                  primaryjoin='IEMSAcademicBatch.academic_batch_id==CudosCourseCloValidator.academic_batch_id',
+                                  viewonly=True)
+
+
+class CudosClo(Base):
+    __tablename__ = 'cudos_clo'
+
+    clo_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    clo_statement = Column(String(2000), nullable=False)
+    clo_code = Column(String(10), nullable=True)
+
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id'), nullable=False)
+    semester_id = Column(Integer, ForeignKey('iems_semester.semester_id'), nullable=False)
+    crs_id = Column(Integer, ForeignKey('iems_courses.crs_id'), nullable=False)
+
+    created_by = Column(Integer, ForeignKey('iems_users.id'), nullable=True)
+    modified_by = Column(Integer, ForeignKey('iems_users.id'), nullable=True)
+    create_date = Column(Date, nullable=True)
+    modify_date = Column(Date, nullable=True)
+
+    cia_clo_minthreshhold = Column(MEDIUMINT(unsigned=True), nullable=True)
+    mte_clo_minthreshhold = Column(MEDIUMINT(unsigned=True), nullable=True)
+    tee_clo_minthreshhold = Column(MEDIUMINT(unsigned=True), nullable=True)
+    clo_studentthreshhold = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+    justify = Column(String(1000), nullable=True)
+    import_ref_clo_id = Column(MEDIUMINT(unsigned=True), nullable=True)
     status = Column(Integer, default=1)
+
+    # convenience relationships (optional)
+    course = relationship("IEMSCourses", foreign_keys=[crs_id], viewonly=True)
+    academic_batch = relationship("IEMSAcademicBatch", foreign_keys=[academic_batch_id], viewonly=True)
+
+
+class CudosCloPoMap(Base):
+    __tablename__ = 'cudos_clo_po_map'
+
+    clo_po_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    clo_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_clo.clo_id', ondelete='CASCADE', onupdate='CASCADE'),
+                    nullable=False)
+    po_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_po.po_id', ondelete='CASCADE', onupdate='CASCADE'),
+                   nullable=False)
+
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id', ondelete='CASCADE',
+                                                   onupdate='CASCADE'), nullable=True)
+    crs_id = Column(Integer, ForeignKey('iems_courses.crs_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+
+    pi_id = Column(MEDIUMINT(unsigned=True),
+                   ForeignKey('cudos_performance_indicator.pi_id', ondelete='CASCADE', onupdate='CASCADE'),
+                   nullable=True)
+    msr_id = Column(MEDIUMINT(unsigned=True),
+                    ForeignKey('cudos_measures.msr_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+
+    map_level = Column(String(15), nullable=True)
+    justification = Column(Text, nullable=True)
+
+    created_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    modified_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    create_date = Column(Date, nullable=True)
+    modify_date = Column(Date, nullable=True)
+
+
+class CudosNotes(Base):
+    __tablename__ = "cudos_notes"
+
+    notes_id = Column(Integer, primary_key=True, autoincrement=True)
+
+    notes = Column(String(2000), nullable=True)
+
+    academic_batch_id = Column(
+        Integer,
+        ForeignKey("iems_academic_batch.academic_batch_id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=False
+    )
+
+    semester_id = Column(
+        Integer,
+        ForeignKey("iems_semester.semester_id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=True
+    )
+
+    particular_id = Column(Integer, nullable=True)
+
+    entity_id = Column(
+        Integer,
+        ForeignKey("cudos_entity.entity_id", ondelete="CASCADE", onupdate="CASCADE"),
+        nullable=True
+    )
+
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+
+    create_date = Column(Date, server_default=func.current_date())
+    modify_date = Column(Date, server_default=func.current_date(), onupdate=func.current_date())
+
+
+class AOMethod(Base):
+    __tablename__ = 'cudos_ao_method'
+
+    ao_method_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    ao_method_pgm_id = Column(Integer, nullable=True)
+    academic_batch_id = Column(Integer, nullable=True)
+    term_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    crs_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    section_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    ao_method_name = Column(String(255), nullable=False)
+    ao_method_description = Column(String(2000), nullable=True)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+    import_ref_ao_method_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+
+class QPDefinition(Base):
+    __tablename__ = 'cudos_qp_definition'
+
+    qpd_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    qpf_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    qpd_type = Column(MEDIUMINT(unsigned=True), nullable=True)
+    cia_model_qp = Column(MEDIUMINT(unsigned=True), default=0)
+    qp_rollout = Column(TINYINT, nullable=True)
+    academic_batch_id = Column(Integer, nullable=True)
+    semester_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    crs_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    lms_ciatee_stud_avg_score = Column(Float, nullable=True)
+    qpd_title = Column(String(100), nullable=True)
+    qpd_timing = Column(String(8), nullable=True)
+    qpd_gt_marks = Column(Float, nullable=True)
+    qpd_max_marks = Column(Float, nullable=True)
+    qpd_notes = Column(Text, nullable=True)
+    qpd_num_units = Column(MEDIUMINT, nullable=True)
+    rubrics_flag = Column(Boolean, default=False)
+    ao_method_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class QPUnitDefinition(Base):
+    __tablename__ = 'cudos_qp_unit_definition'
+
+    qpd_unitd_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    qpd_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qp_definition.qpd_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    qp_unit_code = Column(String(50), nullable=True)
+    qp_total_unitquestion = Column(MEDIUMINT, nullable=True)
+    qp_attempt_unitquestion = Column(MEDIUMINT, nullable=True)
+    qp_utotal_marks = Column(Float, nullable=True)
+    created_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    modified_date = Column(Date, nullable=True)
+    FM = Column(Integer, nullable=False)
+    import_ref_qpd_unitd_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+    qp_definition = relationship('QPDefinition')
+
+
+class QPMainQuestionDefinition(Base):
+    __tablename__ = 'cudos_qp_mainquestion_definition'
+
+    qp_mq_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    qp_unitd_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qp_unit_definition.qpd_unitd_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    qp_mq_flag = Column(MEDIUMINT, nullable=True)
+    qp_mq_code = Column(String(50), nullable=True)
+    qp_subq_code = Column(String(50), nullable=True)
+    qp_content = Column(Text, nullable=True)
+    qp_subq_marks = Column(DECIMAL(19, 2), nullable=True)
+    created_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    modified_date = Column(Date, nullable=True)
+    import_ref_qp_mq_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+    qp_unit_definition = relationship('QPUnitDefinition')
+
+
+class QPMappingDefinition(Base):
+    __tablename__ = 'cudos_qp_mapping_definition'
+
+    qp_map_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    qp_mq_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qp_mainquestion_definition.qp_mq_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    entity_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    actual_mapped_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    modified_date = Column(Date, nullable=True)
+    mapped_marks = Column(Float, nullable=False)
+    mapped_percentage = Column(Integer, nullable=False)
+    import_ref_qp_map_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+    qp_mainquestion = relationship('QPMainQuestionDefinition')
+
+
+class QPOrMappingDefinition(Base):
+    __tablename__ = 'cudos_qp_or_mapping_definition'
+
+    qp_or_map_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    qpd_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qp_definition.qpd_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    question_one = Column(String(1000), nullable=True)
+    question_two = Column(String(1000), nullable=True)
+    or_type = Column(TINYINT(unsigned=True), nullable=False, default=0)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class QPUpload(Base):
+    __tablename__ = 'cudos_qp_upload'
+
+    doc_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    semester_id = Column(Integer, ForeignKey('iems_semester.semester_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    crs_id = Column(Integer, ForeignKey('iems_courses.crs_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    qpd_type = Column(MEDIUMINT(unsigned=True), nullable=True)
+    section_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    ao_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    qpd_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    file_name = Column(String(300), nullable=True)
+    upload_by = Column(Integer, nullable=True)
+    uplaod_date = Column(Date, nullable=True)
+
+
+CudosQpDefinition = QPDefinition
+CudosQpUnitDefinition = QPUnitDefinition
+CudosQpMainQuestionDefinition = QPMainQuestionDefinition
+CudosQpMappingDefinition = QPMappingDefinition
+CudosQpUpload = QPUpload
+
+
+class QPFramework(Base):
+    __tablename__ = 'cudos_qp_framework'
+
+    qpf_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    pgm_id = Column(Integer, ForeignKey('iems_program.pgm_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    qpf_type = Column(String(100), nullable=True)
+    qpf_title = Column(String(100), nullable=True)
+    qpf_num_units = Column(MEDIUMINT, nullable=True)
+    qpf_gt_marks = Column(Float, nullable=True)
+    qpf_max_marks = Column(Float, nullable=True)
+    qpf_notes = Column(Text, nullable=True)
+    qpf_instructions = Column(Text, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class QPFUnit(Base):
+    __tablename__ = 'cudos_qpf_unit'
+
+    qpf_unit_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    qpf_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qp_framework.qpf_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=False)
+    qpf_unit_code = Column(String(50), nullable=True)
+    qpf_num_mquestions = Column(MEDIUMINT, nullable=True)
+    qpf_utotal_marks = Column(Float, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+# class QPFMQuestion(Base):
+#     __tablename__ = 'cudos_qpf_mquestion'
+
+#     qpf_mq_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+#     qpf_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qp_framework.qpf_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+#     qpf_unit_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qpf_unit.qpf_unit_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+#     qpf_unit_code = Column(String(50), nullable=True)
+#     qpf_mq_code = Column(String(50), nullable=True)
+#     qpf_mtotal_marks = Column(Float, nullable=True)
+#     course_outcome_id = Column(Integer, nullable=True)
+#     clo_id = Column(Integer, nullable=True)
+#     bloom_level_id = Column(Integer, nullable=True)
+#     is_mandatory = Column(Integer, nullable=False, default=0)
+#     main_question_no = Column(Integer, nullable=True)
+#     sub_question_no = Column(Integer, nullable=True)
+#     created_by = Column(Integer, nullable=True)
+#     created_date = Column(Date, nullable=True)
+#     modified_by = Column(Integer, nullable=True)
+#     modified_date = Column(Date, nullable=True)
+
+
+class QPFMQuestion(Base):
+    __tablename__ = 'cudos_qpf_mquestion'
+
+    qpf_mq_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    qpf_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qp_framework.qpf_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    qpf_unit_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qpf_unit.qpf_unit_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    qpf_unit_code = Column(String(50), nullable=True)
+    qpf_mq_code = Column(String(50), nullable=True)
+    qpf_mtotal_marks = Column(Float, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Missing models for Manage CIA QP & Rubrics module
+# ─────────────────────────────────────────────────────────────────────────────
+
+
+class CudosMapCoursetoCourseInstructor(Base):
+    __tablename__ = 'cudos_map_courseto_course_instructor'
+
+    mcci_id = Column(Integer, primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, nullable=False)
+    semester_id = Column(Integer, nullable=False)
+    crs_id = Column(Integer, ForeignKey('iems_courses.crs_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=False)
+    course_instructor_id = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    section_id = Column(Integer, nullable=True)
+    student_finalize_flag = Column(Boolean, nullable=True, default=False)
+    cia_finalise_flag = Column(Boolean, nullable=True, default=False)
+    cia_marks_finalise_flag = Column(Boolean, nullable=True)
+    tee_section_wise_marks_uploaded_flag = Column(Boolean, nullable=False, default=False)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+    import_ref_mcci_id = Column(Integer, nullable=True)
+    lms_section_attendance_finalize = Column(Boolean, nullable=True, default=True)
+    sec_stud_reg_flag = Column(Boolean, nullable=False, default=False)
+
+
+    # Relationships
+    course = relationship(
+        "IEMSCourses",
+        back_populates="instructors"
+    )
+
+    instructor = relationship(
+        "IEMSUsers",
+        back_populates="assigned_courses"
+    )
+
+
+
+
+class CudosMapCloBloomLevel(Base):
+    """Maps Course Learning Outcomes (CLOs) to Bloom taxonomy levels."""
+    __tablename__ = 'cudos_map_clo_bloom_level'
+
+    map_clo_bl_id = Column(Integer, primary_key=True, autoincrement=True)
+    clo_id = Column(
+        Integer,
+        ForeignKey('cudos_clo.clo_id', ondelete='CASCADE', onupdate='CASCADE'),
+        nullable=True
+    )
+    bloom_id = Column(
+        Integer,
+        ForeignKey('cudos_bloom_level.bloom_id', ondelete='CASCADE', onupdate='CASCADE'),
+        nullable=True
+    )
+    created_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class CudosMapCloDeliveryMethod(Base):
+    """Maps Course Learning Outcomes (CLOs) to Delivery Methods."""
+    __tablename__ = 'cudos_map_clo_delivery_method'
+
+    map_clo_dm_id = Column(Integer, primary_key=True, autoincrement=True)
+    clo_id = Column(
+        Integer,
+        ForeignKey('cudos_clo.clo_id', ondelete='CASCADE', onupdate='CASCADE'),
+        nullable=True
+    )
+    delivery_method_id = Column(
+        Integer,
+        ForeignKey('cudos_delivery_method.delivery_mtd_id', ondelete='CASCADE', onupdate='CASCADE'),
+        nullable=True
+    )
+    created_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+
+
+
+# class CudosTopic(Base):
+#     """Curriculum topics linked to courses — used in QP question mapping."""
+#     __tablename__ = 'cudos_topic'
+#     __table_args__ = {"extend_existing": True}
+
+#     topic_id = Column(Integer, primary_key=True, autoincrement=True)
+#     topic_name = Column(String(500), nullable=True)
+#     topic_description = Column(Text, nullable=True)
+#     crs_id = Column(
+#         Integer,
+#         ForeignKey('iems_courses.crs_id', ondelete='CASCADE', onupdate='CASCADE'),
+#         nullable=True
+#     )
+#     academic_batch_id = Column(
+#         Integer,
+#         ForeignKey('iems_academic_batch.academic_batch_id'),
+#         nullable=True
+#     )
+#     semester_id = Column(
+#         Integer,
+#         ForeignKey('iems_semester.semester_id'),
+#         nullable=True
+#     )
+#     unit_no = Column(Integer, nullable=True)
+#     status = Column(Integer, default=1, nullable=True)
+#     created_by = Column(Integer, nullable=True)
+#     created_date = Column(Date, nullable=True)
+#     modified_by = Column(Integer, nullable=True)
+#     modified_date = Column(Date, nullable=True)
+
+
+class CudosStudentAssessment(Base):
+    __tablename__ = 'cudos_student_assessment'
+
+    # ✅ Primary Key
+    assessment_id = Column(Integer, primary_key=True, autoincrement=True)
+
+    # ✅ Foreign Keys
+    qp_mq_id = Column(Integer, ForeignKey('cudos_qp_mainquestion_definition.qp_mq_id'))
+    section_id = Column(Integer, ForeignKey('cudos_master_type_details.mt_details_id'))
+
+    # ✅ Student Details
+    roll_number = Column(String(200), nullable=True)
+    student_name = Column(String(100), nullable=True)
+    student_usn = Column(String(50), nullable=True)
+
+    # ✅ Marks Details
+    total_marks = Column(Float, nullable=True)
+    qp_mq_code = Column(String(50), nullable=True)
+    qp_subq_code = Column(String(50), nullable=True)
+    secured_marks = Column(Float, nullable=True)
+
+    # ✅ Other Fields
+    status_flag = Column(Integer, default=1, nullable=True)
+    crclm_name = Column(String(100), nullable=True)
+
+    modified_by = Column(Integer, nullable=True)
+    modify_date = Column(DateTime, nullable=True)
+
+    qp_mainquestion_definition = relationship('QPMainQuestionDefinition')
+    master_type_details = relationship('MasterTypeDetails', foreign_keys=[section_id], viewonly=True)
+
+
+class CudosMapCrsMainOccasionType(Base):
+    __tablename__ = 'cudos_map_crs_main_occasion_type'
+
+    cmot_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    mot_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_org_main_occasion_type.mot_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=False)
+    crs_id = Column(Integer, ForeignKey('iems_courses.crs_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=False)
+    max_mks = Column(MEDIUMINT(unsigned=True), nullable=True)
+    min_mks = Column(MEDIUMINT(unsigned=True), nullable=True)
+    weightage = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    modified_by = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class CudosAoRubricsCriteria(Base):
+    __tablename__ = 'cudos_ao_rubrics_criteria'
+
+    rubrics_criteria_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    ao_method_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    criteria = Column(Text, nullable=False)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+    import_ref_rubrics_criteria_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+
+class CudosAoRubricsRange(Base):
+    __tablename__ = 'cudos_ao_rubrics_range'
+
+    rubrics_range_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    ao_method_id = Column(MEDIUMINT(unsigned=True), nullable=False)
+    rubrics_criteria_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    criteria_range_name = Column(String(100), nullable=True)
+    criteria_range = Column(String(20), nullable=False)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+    import_ref_rubrics_range_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+
+class CudosSuStudentStakeholderDetails(Base):
+    __tablename__ = 'cudos_su_student_stakeholder_details'
+    
+    ssd_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    stakeholder_group_id = Column(Integer, ForeignKey('cudos_su_stakeholder_groups.stakeholder_group_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    dept_id = Column(Integer, ForeignKey('iems_department.dept_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    pgm_id = Column(Integer, ForeignKey('iems_program.pgm_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    crclm_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    section_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_master_type_details.mt_details_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    user_id = Column(Integer, nullable=True)
+    roll_number = Column(String(10), nullable=True)
+    prev_student_usn = Column(String(50), nullable=True)
+    student_usn = Column(String(50), nullable=True)
+    admmission_type = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_master_type_details.mt_details_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    title = Column(String(10), nullable=True)
+    first_name = Column(String(100), nullable=True)
+    middle_name = Column(String(100), nullable=True)
+    last_name = Column(String(100), nullable=True)
+    email = Column(String(100), nullable=True)
+    contact_number = Column(BigInteger, nullable=True)
+    aadhar_number = Column(String(20), nullable=True)
+    dob = Column(Date, nullable=True)
+    personal_email = Column(String(50), nullable=True)
+    parent_name = Column(String(200), nullable=True)
+    parent_gender = Column(MEDIUMINT(unsigned=True), nullable=True)
+    parent_email = Column(String(200), nullable=True)
+    parent_contact = Column(BigInteger, nullable=True)
+    parent2_name = Column(String(200), nullable=True)
+    parent2_gender = Column(MEDIUMINT(unsigned=True), nullable=True)
+    parent2_email = Column(String(200), nullable=True)
+    parent2_contact = Column(BigInteger, nullable=True)
+    student_category = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_master_type_details.mt_details_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    student_gender = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_master_type_details.mt_details_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    student_nationality = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_master_type_details.mt_details_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    any_other_nationality = Column(String(200), nullable=True)
+    student_state = Column(String(200), nullable=True)
+    entrance_exam = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_master_type_details.mt_details_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    any_other_entrance_exam = Column(String(200), nullable=True)
+    student_rank = Column(MEDIUMINT(unsigned=True), nullable=True)
+    created_on = Column(DateTime, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    modified_on = Column(DateTime, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    status_active = Column(Integer, default=1)
+    department_acronym = Column(String(45), nullable=True)
+    import_crclm_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    profile_image = Column(String(45), nullable=True)
+    application_no = Column(String(45), nullable=True)
+    sslc_percentage = Column(DECIMAL(5, 2), nullable=True)
+    puc_percentage = Column(DECIMAL(5, 2), nullable=True)
+    present_address = Column(String(500), nullable=True)
+    permanent_address = Column(String(500), nullable=True)
+    fathers_name = Column(String(45), nullable=True)
+    mothers_name = Column(String(45), nullable=True)
+    fathers_occupation = Column(String(65), nullable=True)
+    mothers_occupation = Column(String(65), nullable=True)
+    guardian_name = Column(String(120), nullable=True)
+    guardian_gender = Column(MEDIUMINT(unsigned=True), nullable=True)
+    guardian_phone = Column(String(20), nullable=True)
+    guardian_email = Column(String(80), nullable=True)
+    guardian_contact = Column(BigInteger, nullable=True)
+    user_pic = Column(String(255), nullable=True)
+    mother_tongue = Column(String(60), nullable=True)
+    semester = Column(Integer, default=1)
+    branch_cycle = Column(Integer, default=1)
+    doj = Column(Date, nullable=True)
+    ems_std_usno = Column(String(45), nullable=True)
+    ems_std_regno = Column(String(45), nullable=True)
+    ems_section = Column(String(45), nullable=True)
+    stud_admission_dept_id = Column(Integer, nullable=True)
+    stud_admission_pgm_id = Column(Integer, nullable=True)
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    active_semester = Column(Integer, nullable=True)
+
+
+class CudosStudentAssessmentTotalmarks(Base):
+    __tablename__ = 'cudos_student_assessment_totalmarks'
+    
+    sat_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    crclm_id = Column(MEDIUMINT(unsigned=True), nullable=True)  # FK to curriculum.crclm_id (table not in SA mapper)
+    term_id = Column(Integer, nullable=True)  # FK to erp_crclm_terms.erp_crclm_term_id (table not in SA mapper)
+    crs_id = Column(Integer, ForeignKey('iems_courses.crs_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    section_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_master_type_details.mt_details_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    ao_id = Column(MEDIUMINT(unsigned=True), nullable=True)
+    qpd_type = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_master_type_details.mt_details_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    qpd_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_qp_definition.qpd_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    student_name = Column(String(100), nullable=True)
+    student_usn = Column(String(50), nullable=True)
+    total_marks = Column(Float(asdecimal=True), nullable=True)
+    crclm_name = Column(String(100), nullable=True)
+    roll_number = Column(String(200), nullable=True)
+    created_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    create_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    modify_date = Column(Date, nullable=True)
+
+
+
+
+#Attainment Performance Level
+
+class CudosPerformanceLevelPO(Base):
+    __tablename__ = 'cudos_performance_level_po'
+
+    plp_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    po_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_po.po_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    performance_level_name = Column(String(50), nullable=True)
+    performance_level_name_alias = Column(String(50), nullable=True)
+    performance_level_value = Column(MEDIUMINT(unsigned=True), nullable=True)
+    description = Column(String(2000), nullable=True)
+    start_range = Column(Float, nullable=True)
+    conditional_opr = Column(String(4), nullable=True)
+    end_range = Column(Float, nullable=True)
+    created_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+    # convenience relationships
+    academic_batch = relationship('IEMSAcademicBatch', primaryjoin='IEMSAcademicBatch.academic_batch_id==CudosPerformanceLevelPO.academic_batch_id', viewonly=True)
+
+
+ 
+class CudosIndirectAttainmentLevelCrclmPo(Base):
+    __tablename__ = 'cudos_indirect_attainment_level_crclm_po'
+
+    indirect_level_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    po_id = Column(MEDIUMINT(unsigned=True), ForeignKey('cudos_po.po_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+
+    attainment_level_name = Column(String(50), nullable=True)
+    attainment_level_name_alias = Column(String(50), nullable=True)
+    attainment_level_value = Column(MEDIUMINT(unsigned=True), nullable=True)
+    conditional_opr = Column(String(4), nullable=True)
+    indirect_percentage = Column(MEDIUMINT(unsigned=True), nullable=True)
+    justify = Column(String(2000), nullable=True)
+
+    created_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+    # convenience relationship
+    academic_batch = relationship('IEMSAcademicBatch', primaryjoin='IEMSAcademicBatch.academic_batch_id==CudosIndirectAttainmentLevelCrclmPo.academic_batch_id', viewonly=True)
+
+
+
+
+class CudosAttainmentLevelCourse(Base):
+    __tablename__ = 'cudos_attainment_level_course'
+
+    alp_id = Column(MEDIUMINT(unsigned=True), primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    semester_id = Column(Integer, ForeignKey('iems_semester.semester_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    crs_id = Column(Integer, ForeignKey('iems_courses.crs_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+
+    attainment_level_name = Column(String(50), nullable=True)
+    attainment_level_name_alias = Column(String(50), nullable=True)
+    attainment_level_value = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+    cia_direct_percentage = Column(MEDIUMINT(unsigned=True), nullable=True)
+    mte_direct_percentage = Column(MEDIUMINT(unsigned=True), nullable=False)
+    tee_direct_percentage = Column(MEDIUMINT(unsigned=True), nullable=True)
+    indirect_percentage = Column(MEDIUMINT(unsigned=True), nullable=True)
+    conditional_opr = Column(String(4), nullable=True)
+
+    cia_target_percentage = Column(MEDIUMINT(unsigned=True), nullable=True)
+    mte_target_percentage = Column(MEDIUMINT(unsigned=True), nullable=False)
+    tee_target_percentage = Column(MEDIUMINT(unsigned=True), nullable=True)
+
+    justify = Column(String(2000), nullable=True)
+
+    created_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+    # convenience relationships
+    academic_batch = relationship('IEMSAcademicBatch', primaryjoin='IEMSAcademicBatch.academic_batch_id==CudosAttainmentLevelCourse.academic_batch_id', viewonly=True)
+    semester = relationship('IEMSemester', primaryjoin='IEMSemester.semester_id==CudosAttainmentLevelCourse.semester_id', viewonly=True)
+    course = relationship('IEMSCourses', primaryjoin='IEMSCourses.crs_id==CudosAttainmentLevelCourse.crs_id', viewonly=True)
+    created_user = relationship('IEMSUsers', primaryjoin='IEMSUsers.id==CudosAttainmentLevelCourse.created_by', viewonly=True)
+    modified_user = relationship('IEMSUsers', primaryjoin='IEMSUsers.id==CudosAttainmentLevelCourse.modified_by', viewonly=True)
+
+
+class CudosAttainmentLevelCrclm(Base):
+    __tablename__ = "cudos_attainment_level_crclm"
+
+    al_crclm_id = Column(Integer, primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, nullable=True)
+
+    attainment_level_name = Column(String(50), nullable=True)
+    attainment_level_name_alias = Column(String(50), nullable=True)
+    attainment_level_value = Column(Integer, nullable=True)
+
+    direct_percentage = Column(Integer, nullable=True)
+    indirect_percentage = Column(Integer, nullable=True)
+
+    conditional_opr = Column(String(4), nullable=True)
+    target_percentage = Column(Integer, nullable=True)
+
+    justify = Column(String(2000), nullable=True)
+
+    created_by = Column(Integer, nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+
+class CudosMapCourseBloomlevel(Base):
+    __tablename__ = "cudos_map_course_bloomlevel"
+
+    map_course_blm_id = Column(Integer, primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, ForeignKey("iems_academic_batch.academic_batch_id"), nullable=True)
+    term_id = Column(Integer, ForeignKey("iems_semester.semester_id"), nullable=False)
+    crs_id = Column(Integer, ForeignKey("iems_courses.crs_id"), nullable=False)
+    bld_id = Column(Integer, ForeignKey("cudos_bloom_domain.bld_id"), nullable=True)
+    bloom_id = Column(Integer, ForeignKey("cudos_bloom_level.bloom_id"), nullable=False)
+    
+    # Thresholds
+    cia_bloomlevel_minthreshhold = Column(Integer, default=50)
+    mte_bloomlevel_minthreshhold = Column(Integer, default=50)
+    tee_bloomlevel_minthreshhold = Column(Integer, default=50)
+    bloomlevel_studentthreshhold = Column(Integer, default=70)
+    
+    justify = Column(String(1000), nullable=True)
+    
+    # Audit Fields
+    created_by = Column(Integer, ForeignKey("iems_users.id"), nullable=True)
+    modified_by = Column(Integer, ForeignKey("iems_users.id"), nullable=True)
+    created_date = Column(Date, nullable=True)
+    modified_date = Column(Date, nullable=True)
+
+    # Relationships (Optional but helpful for joining)
+    bloom_master = relationship("BloomLevel")
+    
+
+class CudosSuQuestionType(Base):
+    __tablename__ = "cudos_su_question_types"
+    __table_args__ = {'extend_existing': True}
+
+    question_type_id = Column(Integer, primary_key=True, autoincrement=True)
+    question_type_name = Column(String(250), nullable=False)
+    description = Column(String(2000), nullable=True)
+    status = Column(SmallInteger, default=1)
+    modify_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    
+class CudosSuStakeholderGroup(Base):
+    __tablename__ = "cudos_su_stakeholder_groups"
+    __table_args__ = {'extend_existing': True}
+
+    stakeholder_group_id = Column(Integer, primary_key=True, autoincrement=True)
+    title = Column(String(256), nullable=False)
+    description = Column(String(2000), nullable=True)
+    status = Column(SmallInteger, default=1)
+    created_on = Column(DateTime, nullable=False)
+    created_by = Column(Integer, nullable=False)
+    modified_on = Column(DateTime, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    student_group = Column(SmallInteger, default=0)
+
+class CudosSuAnswerTemplate(Base):
+    __tablename__ = "cudos_su_answer_templates"
+    __table_args__ = {'extend_existing': True}
+
+    answer_template_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(45), nullable=False)
+    status = Column(SmallInteger, default=1)
+    feedbk_flag = Column(SmallInteger, default=0) # 0: Improvement, 1: Outcome Attainment
+    modify_date = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+
+    options_list = relationship("CudosSuAnswerOption", back_populates="template", cascade="all, delete-orphan")
+
+class CudosSuAnswerOption(Base):
+    __tablename__ = "cudos_su_answer_options"
+    __table_args__ = {'extend_existing': True}
+
+    answer_options_id = Column(Integer, primary_key=True, autoincrement=True)
+    answer_template_id = Column(Integer, ForeignKey('cudos_su_answer_templates.answer_template_id', ondelete="CASCADE"))
+    options = Column(String(200), nullable=False) # Maps to Option Label
+    option_val = Column(SmallInteger, default=1)  # Maps to Weightage
+
+    template = relationship("CudosSuAnswerTemplate", back_populates="options_list")
+
+class CudosSuStakeholderDetail(Base):
+    __tablename__ = "cudos_su_stakeholder_details"
+    __table_args__ = {'extend_existing': True}
+
+    stakeholder_detail_id = Column(Integer, primary_key=True, autoincrement=True)
+    stakeholder_group_id = Column(Integer, ForeignKey('cudos_su_stakeholder_groups.stakeholder_group_id'), nullable=False)
+    first_name = Column(String(50), nullable=False)
+    last_name = Column(String(50), nullable=False)
+    email = Column(String(200), nullable=False)
+    qualification = Column(String(45), nullable=True)
+    contact = Column(BigInteger, nullable=True)
+    
+    created_on = Column(DateTime, nullable=False)
+    created_by = Column(Integer, nullable=False)
+    modified_on = Column(DateTime, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    status = Column(SmallInteger, default=1)
+    academic_batch_id = Column(Integer, default=0) 
+    student_usn = Column(String(45), default='null')
+    dept_id = Column(Integer, default=0)
+    pgm_id = Column(Integer, default=0)
+
+    group = relationship("CudosSuStakeholderGroup", backref="stakeholders")
+    
+
+class CudosSuTemplate(Base):
+    __tablename__ = "cudos_su_template"
+    __table_args__ = {'extend_existing': True}
+
+    template_id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(200), nullable=False)
+    description = Column(String(2000), nullable=False)
+    dept_id = Column(Integer, ForeignKey('iems_department.dept_id'), nullable=False)
+    pgm_id = Column(Integer, ForeignKey('iems_program.pgm_id'), nullable=False)
+    crs_id = Column(Integer, default=None)
+    su_type_id = Column(Integer, nullable=False)
+    answer_template_id = Column(Integer, ForeignKey('cudos_su_answer_templates.answer_template_id'), default=None)
+    su_for = Column(Integer, nullable=False)
+    status = Column(SmallInteger, default=0)
+    created_on = Column(DateTime, nullable=False)
+    created_by = Column(Integer, nullable=False)
+    modified_on = Column(DateTime, default=None)
+    modified_by = Column(Integer, default=None)
+
+    # Relationships
+    questions = relationship("CudosSuTemplateQuestions", back_populates="template", cascade="all, delete-orphan")
+
+
+class CudosSuTemplateQuestions(Base):
+    __tablename__ = "cudos_su_template_questions"
+    __table_args__ = {'extend_existing': True}
+
+    template_question_id = Column(Integer, primary_key=True, autoincrement=True)
+    template_id = Column(Integer, ForeignKey('cudos_su_template.template_id'), nullable=False)
+    question_type_id = Column(Integer, ForeignKey('cudos_su_question_types.question_type_id'), nullable=False)
+    question = Column(String(2000), nullable=False)
+    is_multiple_choice = Column(Integer, default=0) # 0: single, 1: multiple, 595: descriptive
+    is_option_type = Column(SmallInteger, default=0)
+
+    # Relationships
+    template = relationship("CudosSuTemplate", back_populates="questions")
+    options = relationship("CudosSuTemplateQstnOptions", back_populates="question", cascade="all, delete-orphan")
+
+
+class CudosSuTemplateQstnOptions(Base):
+    __tablename__ = "cudos_su_template_qstn_options"
+    __table_args__ = {'extend_existing': True}
+
+    template_qstn_option_id = Column(Integer, primary_key=True, autoincrement=True)
+    template_question_id = Column(Integer, ForeignKey('cudos_su_template_questions.template_question_id'), nullable=False)
+    template_id = Column(Integer, ForeignKey('cudos_su_template.template_id'), nullable=False)
+    option = Column(String(200), nullable=False)
+    option_val = Column(SmallInteger, default=1)
+
+    # Relationships
+    question = relationship("CudosSuTemplateQuestions", back_populates="options")
+    

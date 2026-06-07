@@ -350,6 +350,14 @@ def get_education_details(db: Session):
 #         return data
 #     except Exception as e:
 #         raise e
+
+def get_physically_challenged_descriptions(db: Session):
+    try:
+        descriptions = db.query(PhysicallyChallengedDescription).all()
+        data = [{"pc_description_id": desc.pc_description_id, "description": desc.description} for desc in descriptions]
+        return data
+    except Exception as e:
+        raise e
     
 def get_physically_challenged(db: Session):
     try:

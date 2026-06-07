@@ -18,14 +18,16 @@ from .comman_function_schema import AcademicBatchRequest, BatchCycleFilter, Bloo
     ParamRequestModel, DepartmentListReq, ProgramTypeListReq, ResultYearRequest, SectionRequest, SemesterCheckRequest, \
     SemesterRequest, SetApproveRequest, SoftDeleteRequest, StateRequest, StudentProgramRequest, \
     StudentSectionListRequest, ComputeOpenElectiveCIARequest, StudentCourseRequestParams
-from .....db.models import Caste, City, Country, IEMExamEvent, IEMExamHallMaster, IEMExamSession, IEMGrade, \
+#from .....db.models import Caste, City, Country, CudosDeliveryMethod, IEMExamEvent, IEMExamHallMaster, IEMExamSession, \
+from .....db.models import Caste, City, Country, CudosClo, CudosDeliveryMethod, IEMExamEvent, IEMExamHallMaster, IEMExamSession, IEMGrade, \
+    IEMGrade, \
     IEMLabCourseBatch, IEMOrgConfigs, IEMOrganisation, IEMParentsOccupationMaster, IEMSAcademicBatch, IEMSBatchCycle, \
     IEMSCIAExamMaster, IEMSCIAStudentCourses, IEMSCIOccasionType, IEMSClassTimings, IEMSCourseType, IEMSCourses, \
     IEMSCrsFaculty, IEMSEventCalenderDetails, IEMSEventStatus, IEMSDepartment, IEMProgramType, IEMProgram, \
+    IEMSEventTypeMaster, IEMSProgressionRules, IEMSProgramMode, IEMSTemplate, IEMSTtDaysSet, IEMSUserCourseMgmt, IEMSUserRoleMaster, \
     IEMSEventTypeMaster, IEMSProgressionRules, IEMSTemplate, IEMSTtDaysSet, IEMSUserCourseMgmt, IEMSUserRoleMaster, \
     IEMSUserRoles, IEMSUsers, IEMSection, IEMSemTimeTable, IEMSemester, IEMStudents, PhysicallyChallengedDescription, \
-    State, StudentCourse
-from ...cudo_module.bloom_domain.model.bloom_domain_model import BloomDomain
+    State, StudentCourse, BloomDomain, IEMSProgramMode
 from .....utils.auth_helper import get_current_user
 from .....utils.http_return_helper import returnSuccess, returnException
 from .....core.database import get_db, get_db_pool
@@ -203,11 +205,11 @@ def department_list(
         if org_id is None:
             # print("DEBUG: org_id header missing, defaulting to 1")
             org_id = 1
-            
+
         # print(f"DEBUG: department_list called with params: {params}, org_id: {org_id}")
-        
+
         logged_user_id = current_user.get("user_id")
-        
+
         # FIX: Allow departments with NULL org_id (legacy data support)
         query = db.query(IEMSDepartment).filter(or_(IEMSDepartment.org_id == org_id, IEMSDepartment.org_id == None))
 
@@ -774,20 +776,20 @@ def bloom_domain_list(
         db: Session = Depends(get_db)
 ):
     try:
-        query = db.query(BloomDomain).filter(BloomDomain.org_id == org_id, BloomDomain.status != 2)
+        query = db.query(BloomDomain).filter(BloomDomain.bld_code == org_id, BloomDomain.status != 2)
 
         if params.show_delete != 1:
             query = query.filter(BloomDomain.status == 1)
 
-        bloom_domains = query.order_by(BloomDomain.bloom_domain_id).all()
+        bloom_domains = query.order_by(BloomDomain.bld_id).all()
 
         return returnSuccess([{
-            "bloom_domain_id": d.bloom_domain_id,
-            "bloom_domain_name": d.bloom_domain_name,
-            "bloom_domain_acronym": d.bloom_domain_acronym,
-            "bloom_domain_description": d.bloom_domain_description,
+            "bloom_domain_id": d.bld_id,
+            "bloom_domain_name": d.bld_name,
+            "bloom_domain_acronym": d.bld_acronym,
+            "bloom_domain_description": d.bld_description,
             "status": d.status,
-            "org_id": d.org_id,
+            "org_id": d.bld_code,
             "create_date": d.create_date.strftime("%Y-%m-%d %H:%M:%S") if d.create_date else None,
             "created_by": d.created_by,
             "modify_date": d.modify_date.strftime("%Y-%m-%d %H:%M:%S") if d.modify_date else None,
@@ -1119,6 +1121,8 @@ def soft_delete(
 ):
     try:
         message = soft_delete_record(req, db)
+        if not isinstance(message, str):
+            return message
         return returnSuccess(f"Record {message} successfully.")
     except Exception as e:
         db.rollback()
@@ -1129,11 +1133,22 @@ def soft_delete_record(req: SoftDeleteRequest, db: Session):
     # Get the appropriate table name based on the flag
     table_model, primary_key = get_flag_table(req.flag)
     if table_model is None:
-        returnException("Invalid table name provided.")
+        return returnException("Invalid table name provided.")
+
+    record_query = db.query(table_model).filter(getattr(table_model, primary_key) == req.record_id)
+    record = record_query.first()
+    if not record:
+        return returnException("Record not found.")
+
+    # Bloom Domain requires safe delete: keep DB row, mark as deleted.
+    if req.flag == "bloom_domain" and req.status == 2:
+        record_query.update({"status": 2})
+        db.commit()
+        return "deleted"
 
     # If status is 2, perform a hard delete (remove from database)
     if req.status == 2:
-        db.query(table_model).filter(getattr(table_model, primary_key) == req.record_id).delete()
+        record_query.delete()
         db.commit()
         return "deleted"
 
@@ -1143,7 +1158,7 @@ def soft_delete_record(req: SoftDeleteRequest, db: Session):
         return returnException("Invalid status provided. Must be 1 for activated, 0 for deactivated, or 2 for deleted.")
 
     # Update the status for the given record ID (Soft Delete / Toggle)
-    db.query(table_model).filter(getattr(table_model, primary_key) == req.record_id).update({"status": req.status})
+    record_query.update({"status": req.status})
     db.commit()
     return status_message
 
@@ -1172,7 +1187,10 @@ def get_flag_table(flag: str):
         "cia_master_dlt": (IEMSCIAExamMaster, "id"),
         "hall_master_dlt": (IEMExamHallMaster, "exam_hall_master_id"),
         "progression_rules": (IEMSProgressionRules, "progression_rule_id"),
-        "bloom_domain": (BloomDomain, "bloom_domain_id"),
+        "bloom_domain": (BloomDomain, "bld_id"),
+        "course_outcome": (CudosClo, "clo_id"),
+        "delivery_method": (CudosDeliveryMethod, "delivery_mtd_id"),
+        "program_mode": (IEMSProgramMode, "prg_mode_id"),
     }
     return table_mapping.get(flag, (None, None))
 

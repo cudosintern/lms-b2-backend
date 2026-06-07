@@ -14,3 +14,4 @@ openpyxl
 fpdf
 python-docx
 pydantic[email]
+xlrd
