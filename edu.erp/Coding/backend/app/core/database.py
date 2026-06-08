@@ -16,7 +16,7 @@ load_dotenv(dotenv_path=dotenv_path)
 DB_USERNAME = os.getenv("DB_USERNAME")
 DB_PASSWORD = os.getenv("DB_PASSWORD", "")
 DB_HOST = os.getenv("DB_HOST")
-DB_PORT = int(os.getenv("DB_PORT", 3306))
+DB_PORT = int(os.getenv("DB_PORT", 3307))
 DB_NAME = os.getenv("DB_NAME")
 
 # URL encode the password to handle special characters like @

@@ -5742,3 +5742,221 @@ class CudosSuTemplateQstnOptions(Base):
     # Relationships
     question = relationship("CudosSuTemplateQuestions", back_populates="options")
     
+class LMSQuestionnaires(Base):
+    __tablename__ = "lms_questionnaires"
+
+    questionnaire_id = Column(SmallInteger,primary_key=True,autoincrement=True)
+    questionnaire_name = Column(String(100), nullable=False)
+    message_to_mentees = Column(Text)
+    access_level = Column(SmallInteger,default=0)
+    parent_id = Column(SmallInteger,ForeignKey("lms_questionnaires.questionnaire_id"))
+    created_by = Column(Integer, nullable=False)
+    modified_by = Column(Integer)
+    created_date = Column(DateTime,default=func.now())
+    modified_date = Column(DateTime,default=func.now(),onupdate=func.now())
+
+class LMSQuestionType(Base):
+    __tablename__ = "lms_question_type"
+
+    que_type_id = Column(
+        SmallInteger,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    que_type_name = Column(
+        String(100),
+        nullable=False
+    )
+
+    que_type_desc = Column(
+        String(200),
+        nullable=True
+    )
+
+    created_by = Column(Integer, nullable=False)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSQuestionnaireType(Base):
+    __tablename__ = "lms_questionnaire_type"
+
+    questionnaire_type_id = Column(
+        SmallInteger,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    questionnaire_type_name = Column(
+        String(100),
+        nullable=False
+    )
+
+    questionnaire_type_desc = Column(
+        String(200),
+        nullable=True
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSQuestionnairesQuestions(Base):
+    __tablename__ = "lms_questionnaires_questions"
+
+    questionnaire_que_id = Column(Integer, primary_key=True, autoincrement=True)
+
+    questionnaire_id = Column(Integer)
+    que_type_id = Column(Integer)
+
+    que_no = Column(Integer)
+
+    question = Column(Text)
+
+    questionnaire_type_id = Column(Integer)
+
+    que_is_mandatory = Column(Boolean, default=True)
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(DateTime, default=datetime.now)
+    modified_date = Column(DateTime, default=datetime.now)
+
+class LMSQuestionnairesOptions(Base):
+    __tablename__ = "lms_questionnaires_options"
+
+    questionnaire_options_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    questionnaire_que_id = Column(Integer)
+
+    que_option = Column(String(300))
+
+    specify_flag = Column(Boolean, default=False)
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(DateTime, default=datetime.now)
+    modified_date = Column(DateTime, default=datetime.now)
+
+class LMSMentorsGroup(Base):
+    __tablename__ = "lms_mentors_group"
+
+    mentors_group_id = Column(Integer, primary_key=True, autoincrement=True)
+
+    academic_batch_id = Column(Integer, nullable=False)
+    semester_id = Column(Integer, nullable=False)
+
+    config_type_id = Column(Integer)
+    questionnaire_id = Column(Integer)
+
+    mentors_pgm_title = Column(String(100))
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(DateTime, server_default=func.now())
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSMentorsGroupTerms(Base):
+    __tablename__ = "lms_mentors_group_terms"
+
+    mentors_group_terms_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    mentors_group_id = Column(Integer, nullable=False)
+
+    academic_batch_id = Column(Integer, nullable=False)
+
+    semester_id = Column(Integer, nullable=False)
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(DateTime, server_default=func.now())
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSGroupMentors(Base):
+    __tablename__ = "lms_group_mentors"
+
+    group_mentor_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    mentors_group_terms_id = Column(Integer, nullable=False)
+
+    mentor_id = Column(Integer, nullable=False)
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(DateTime, server_default=func.now())
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSGroupMentees(Base):
+    __tablename__ = "lms_group_mentees"
+
+    group_mentee_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    mentors_group_terms_id = Column(Integer, nullable=False)
+
+    group_mentor_id = Column(Integer, nullable=False)
+
+    student_id = Column(Integer, nullable=False)
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(DateTime, server_default=func.now())
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+

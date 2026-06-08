@@ -35,7 +35,7 @@ app.include_router(api_router)
 
 @app.get("/")
 def read_root():
-    return {"message": "Welcome to IonCudos API"}
+    return {"message": "Welcome to IonCudos-LMS Interns API"}
 
 
 # @app.get("/")

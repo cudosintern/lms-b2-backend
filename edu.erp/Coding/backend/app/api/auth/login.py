@@ -5,7 +5,7 @@ from ...utils.comman_function import all_masters_list, fetch_role_list, fetch_us
     get_academics_event_status, get_admission_type, get_blood_group_list_options, get_caste_list, get_category_options, \
     get_certificate, get_coursetype_cia_marks, get_coursetype_list_options, get_coursetype_options, \
     get_education_details, get_event_status_options, get_grade_type_list, get_hall_type_list, get_occupation_list, \
-    get_parents_occupation_master_list, get_physically_challenged_descriptions, get_quota, get_section_list_options, \
+    get_parents_occupation_master_list, get_quota, get_section_list_options, \
     get_user_designation, get_user_org_role, organization_list, priority_list, religion_list
 from ...api.auth.login_schema import LoginDataRequest
 from ...utils.http_return_helper import returnException, returnSuccess
