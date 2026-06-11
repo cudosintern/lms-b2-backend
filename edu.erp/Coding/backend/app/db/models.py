@@ -5741,19 +5741,150 @@ class CudosSuTemplateQstnOptions(Base):
 
     # Relationships
     question = relationship("CudosSuTemplateQuestions", back_populates="options")
-    
+
 class LMSQuestionnaires(Base):
     __tablename__ = "lms_questionnaires"
 
-    questionnaire_id = Column(SmallInteger,primary_key=True,autoincrement=True)
-    questionnaire_name = Column(String(100), nullable=False)
+    questionnaire_id = Column(
+        SmallInteger,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    questionnaire_name = Column(
+        String(100),
+        nullable=False
+    )
+
     message_to_mentees = Column(Text)
-    access_level = Column(SmallInteger,default=0)
-    parent_id = Column(SmallInteger,ForeignKey("lms_questionnaires.questionnaire_id"))
+
+    access_level = Column(
+        SmallInteger,
+        default=0
+    )
+
+    parent_id = Column(
+        SmallInteger,
+        ForeignKey("lms_questionnaires.questionnaire_id")
+    )
+
     created_by = Column(Integer, nullable=False)
     modified_by = Column(Integer)
-    created_date = Column(DateTime,default=func.now())
-    modified_date = Column(DateTime,default=func.now(),onupdate=func.now())
+
+    created_date = Column(
+        DateTime,
+        default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now()
+    )
+
+    questions = relationship(
+        "LMSQuestionnairesQuestions",
+        back_populates="questionnaire",
+        cascade="all, delete-orphan"
+    )
+    
+class LMSQuestionnairesQuestions(Base):
+    __tablename__ = "lms_questionnaires_questions"
+
+    questionnaire_que_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    questionnaire_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_questionnaires.questionnaire_id",
+            ondelete="CASCADE"
+        )
+    )
+
+    que_type_id = Column(Integer)
+
+    que_no = Column(Integer)
+
+    question = Column(Text)
+
+    questionnaire_type_id = Column(Integer)
+
+    que_is_mandatory = Column(
+        Boolean,
+        default=True
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        default=datetime.now
+    )
+
+    modified_date = Column(
+        DateTime,
+        default=datetime.now,
+        onupdate=datetime.now
+    )
+
+    questionnaire = relationship(
+        "LMSQuestionnaires",
+        back_populates="questions"
+    )
+
+    options = relationship(
+        "LMSQuestionnairesOptions",
+        back_populates="question",
+        cascade="all, delete-orphan"
+    )
+
+class LMSQuestionnairesOptions(Base):
+    __tablename__ = "lms_questionnaires_options"
+
+    questionnaire_options_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    questionnaire_que_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_questionnaires_questions.questionnaire_que_id",
+            ondelete="CASCADE"
+        )
+    )
+
+    que_option = Column(String(300))
+
+    specify_flag = Column(
+        Boolean,
+        default=False
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        default=datetime.now
+    )
+
+    modified_date = Column(
+        DateTime,
+        default=datetime.now,
+        onupdate=datetime.now
+    )
+
+    question = relationship(
+        "LMSQuestionnairesQuestions",
+        back_populates="options"
+    )
 
 class LMSQuestionType(Base):
     __tablename__ = "lms_question_type"
@@ -5820,49 +5951,6 @@ class LMSQuestionnaireType(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
-
-class LMSQuestionnairesQuestions(Base):
-    __tablename__ = "lms_questionnaires_questions"
-
-    questionnaire_que_id = Column(Integer, primary_key=True, autoincrement=True)
-
-    questionnaire_id = Column(Integer)
-    que_type_id = Column(Integer)
-
-    que_no = Column(Integer)
-
-    question = Column(Text)
-
-    questionnaire_type_id = Column(Integer)
-
-    que_is_mandatory = Column(Boolean, default=True)
-
-    created_by = Column(Integer)
-    modified_by = Column(Integer)
-
-    created_date = Column(DateTime, default=datetime.now)
-    modified_date = Column(DateTime, default=datetime.now)
-
-class LMSQuestionnairesOptions(Base):
-    __tablename__ = "lms_questionnaires_options"
-
-    questionnaire_options_id = Column(
-        Integer,
-        primary_key=True,
-        autoincrement=True
-    )
-
-    questionnaire_que_id = Column(Integer)
-
-    que_option = Column(String(300))
-
-    specify_flag = Column(Boolean, default=False)
-
-    created_by = Column(Integer)
-    modified_by = Column(Integer)
-
-    created_date = Column(DateTime, default=datetime.now)
-    modified_date = Column(DateTime, default=datetime.now)
 
 class LMSMentorsGroup(Base):
     __tablename__ = "lms_mentors_group"
@@ -5959,4 +6047,3 @@ class LMSGroupMentees(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
-

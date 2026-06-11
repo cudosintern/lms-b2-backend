@@ -42,6 +42,8 @@ from app.api.v1.cudo_module.manage_knowledge_and_attitude_profile.api import (
     router as manage_knowledge_and_attitude_profile_router
 )
 
+
+
 ##LMS(Questionnaire)
 from app.api.v1.lms_module.lms_mmp_questionnaire.lms_mmp_questionnaire import (
     router as lms_mmp_questionnaire_router
@@ -55,13 +57,6 @@ from app.api.v1.lms_module.lms_questionnaire_type.lms_questionnaire_type import 
     router as lms_questionnaire_type_router
 )
 
-from app.api.v1.lms_module.lms_questionnaire_question.lms_questionnaire_question import (
-    router as lms_questionnaire_question_router
-)
-
-from app.api.v1.lms_module.lms_questionnaire_que_options.lms_questionnaire_que_options import (
-    router as lms_questionnaire_que_options_router
-)
 
 router = APIRouter()
 
@@ -450,18 +445,18 @@ router.include_router(
 # router.include_router(student_route.static_router)
 
 # include BOARD OF STUDIES (BoS)
-router.include_router(
-    bos_member_router,
-    prefix="/cudos/board-of-studies",
-    tags=["Board Of Studies"]
-)
+# router.include_router(
+#     bos_member_router,
+#     prefix="/cudos/board-of-studies",
+#     tags=["Board Of Studies"]
+# )
 
 # include DELIVERY METHOD
-router.include_router(
-    delivery_method_router,
-    prefix="/cudos/delivery-method",
-    tags=["Delivery Method"]
-)
+# router.include_router(
+#     delivery_method_router,
+#     prefix="/cudos/delivery-method",
+#     tags=["Delivery Method"]
+# )
 
 #include MAP LEVEL WEIGHTAGE
 router.include_router(
@@ -518,16 +513,4 @@ router.include_router(
     lms_questionnaire_type_router,
     prefix="/lms_questionnaire_type",
     tags=["Questionnaire Type"]
-)
-
-router.include_router(
-    lms_questionnaire_question_router,
-    prefix="/lms_questionnaire_question",
-    tags=["LMS Questionnaire Questions"]
-)
-
-router.include_router(
-    lms_questionnaire_que_options_router,
-    prefix="/lms_questionnaire_que_options",
-    tags=["LMS Questionnaire Options"]
 )
