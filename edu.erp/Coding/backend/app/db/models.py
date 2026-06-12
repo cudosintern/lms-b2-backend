@@ -268,6 +268,12 @@ class IEMSBranchMst(Base):
 
 class IEMSBulkStudentDetails(Base):
     __tablename__ = 'iems_bulk_student_details'
+    __table_args__ = (
+        {
+            'mysql_engine': 'InnoDB',
+            'mysql_row_format': 'DYNAMIC'
+        }
+    )
 
     id = Column(Integer, primary_key=True, autoincrement=False)
     Remarks = Column(Text, nullable=True)
@@ -377,7 +383,7 @@ class IEMSBulkStudentDetails(Base):
     reg_no = Column(String(45), nullable=True)
     section = Column(String(45), nullable=True)
     is_physically_challenged = Column(SmallInteger, nullable=True)
-    pc_description_id = Column(Integer, nullable=True)
+    pc_description_id = Column(Integer, ForeignKey("iems_category_type_master.category_id", use_alter=True, name="fk_pc_desc"), nullable=True)
     permanent_address2 = Column(String(100), nullable=True)
     permanent_landmark = Column(String(100), nullable=True)
     permanent_street = Column(String(100), nullable=True)
@@ -1249,20 +1255,20 @@ class IEMGCStore(Base):
     __tablename__ = 'iems_gc_store'
 
     id = Column(Integer, primary_key=True)  # UNSIGNED INT(11)
-    gc_code = Column(String(30, 'utf8'), nullable=False)
-    usno = Column(String(20, 'utf8'), nullable=False)
+    gc_code = Column(String(30), nullable=False)
+    usno = Column(String(20), nullable=False)
     result_year = Column(Date, nullable=False)
     semester = Column(Integer, nullable=True)  # UNSIGNED INT(11)
     org_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
-    regno = Column(String(20, 'utf8'), nullable=False)
+    regno = Column(String(20), nullable=False)
 
 
 class IEMGrace(Base):
     __tablename__ = 'iems_grace'
 
     grace_id = Column(Integer, primary_key=True)  # UNSIGNED INT(11)
-    grace_type = Column(String(45, 'utf8'), nullable=False)
-    grace_description = Column(String(45, 'utf8'), nullable=False)
+    grace_type = Column(String(45), nullable=False)
+    grace_description = Column(String(45), nullable=False)
     org_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
     grace_marks = Column(Float, nullable=False)  # DOUBLE
     status = Column(Integer, default=1)  # TINYINT(1) UNSIGNED
@@ -1280,8 +1286,8 @@ class IEMGracePreferences(Base):
     __tablename__ = 'iems_grace_preferences'
 
     preferences_id = Column(Integer, primary_key=True)  # UNSIGNED INT(11)
-    preferences_type = Column(String(45, 'utf8'), nullable=False)
-    priority = Column(String(45, 'utf8'), nullable=False)
+    preferences_type = Column(String(45), nullable=False)
+    priority = Column(String(45), nullable=False)
 
 
 class IEMGraceStudentCourses(Base):
@@ -1294,7 +1300,7 @@ class IEMGraceStudentCourses(Base):
     grace_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
     preferences_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
     split_marks = Column(Float, nullable=False)  # DOUBLE
-    regno = Column(String(45, 'utf8'), nullable=False)
+    regno = Column(String(45), nullable=False)
     finalize = Column(Integer, nullable=False)  # UNSIGNED INT(11)
     org_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
     status = Column(Integer, default=1)  # TINYINT(1) UNSIGNED
@@ -1357,8 +1363,8 @@ class IEMInSemExamStudentCourses(Base):
     __tablename__ = 'iems_in_sem_exam_student_courses'
 
     id = Column(Integer, primary_key=True)  # UNSIGNED INT(11)
-    regno = Column(String(45, 'utf8'), nullable=False)
-    crs_code = Column(String(15, 'utf8'), nullable=False)
+    regno = Column(String(45), nullable=False)
+    crs_code = Column(String(15), nullable=False)
     hall_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
     exam_time_table_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
     std_crs_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
@@ -1375,8 +1381,8 @@ class IEMInSemExamTimeTable(Base):
     academic_batch_id = Column(Integer, nullable=True)  # UNSIGNED INT(11)
     batch_cycle_id = Column(Integer, nullable=False)  # UNSIGNED INT(11)
     semester = Column(Integer, nullable=True)  # INT(11)
-    crs_code = Column(String(15, 'utf8'), nullable=True)
-    lab_course = Column(String(1, 'utf8'), nullable=True)
+    crs_code = Column(String(15), nullable=True)
+    lab_course = Column(String(1), nullable=True)
     cia_master_id = Column(Integer, nullable=True)  # UNSIGNED INT(11)
     cia_map_id = Column(Integer, nullable=True)  # UNSIGNED INT(11)
     exam_date = Column(Date, nullable=True)

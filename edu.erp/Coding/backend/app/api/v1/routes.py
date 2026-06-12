@@ -1,8 +1,30 @@
 from fastapi import APIRouter
 from ...api.auth import login
 from app.api.v1.cudo_module.curriculum.delivery_method.curriculum_delivery_method import (
-    router as curriculum_delivery_router
+    router as curriculum_delivery_router)
+from app.api.v1.lms_module.department import router as department_router
+from ...api.v1.lms_module import config_type
+from ...api.v1.lms_module import cross_department_mentor
+
+
+router = APIRouter()
+
+router.include_router(
+    department_router,
+    prefix="/department",
+    tags=["LMS-configuration"]
 )
+router.include_router(
+    config_type.router,
+    prefix="/config-type",
+    tags=["LMS-Configuration"]
+)
+router.include_router(
+    cross_department_mentor.router,
+    prefix="/cross-department-mentor",
+    tags=["LMS-Configuration"]
+)
+
 # from ...api.v1.home import dashboard_info 
 # from ...api.v1.configurations.all_master import all_master
 # from ...api.v1.configurations.usermaster import user_master
@@ -97,7 +119,7 @@ from ...api.auth import login
 # from ...api.v1.ems_module.configurations.staff_course_allocation import (
 #     staff_course_allocation,
 # )
-from ...api.v1.ems_module.configurations.department import department
+from ...api.v1.lms_module import department
 # from ...api.v1.ems_module.configurations.program import program
 # from ...api.v1.ems_module.configurations.program_type import program_type
 # from ...api.v1.ems_module.academics.academic_batch import academic_batch
@@ -120,7 +142,7 @@ from ...api.v1.ems_module.configurations.department import department
 # from ...api.v1.ems_module.registration.examiner_registration import (
 #     examiner_registration,
 # )
-from ...api.v1.ems_module.comman_functions import comman_function
+# from ...api.v1.lms_module.lms import comman_function
 # from ...api.v1.ems_module.registration.student_exam_registration import (
 #     student_exam_registration,
 # )
@@ -381,6 +403,7 @@ from app.api.v1.cudo_module.manage_knowledge_and_attitude_profile.api import (
 
 
 router = APIRouter()
+router.include_router(department_router, prefix="/department", tags=["LMS-configuration"])
 
 router.include_router(
     bloom_domain_router, prefix="/bloom_domain", tags=["Bloom Domain"]
@@ -413,7 +436,7 @@ router.include_router(login.router, prefix="/staff_student_login", tags=["auth"]
 # router.include_router(dashboard_info.router, prefix="/dashboard_info_route", tags=["auth"])
 
 # Include routes for comman function  module
-router.include_router(comman_function.router, prefix="/comman_function", tags=["auth"])
+#router.include_router(comman_function.router, prefix="/comman_function", tags=["auth"])
 
 # Include routes for configuration module
 # router.include_router(all_master.router, prefix="/all_master", tags=["auth"])
@@ -421,7 +444,7 @@ router.include_router(comman_function.router, prefix="/comman_function", tags=["
 # router.include_router(user_roles.router, prefix="/user_roles", tags=["auth"])
 # router.include_router(user_access.router, prefix="/user_acccess", tags=["auth"])
 # router.include_router(staff_course_allocation.router, prefix="/user_courses", tags=["auth"])
-router.include_router(department.router, prefix="/department", tags=["auth"])
+#router.include_router(department.router, prefix="/department", tags=["auth"])
 # router.include_router(program.router, prefix="/program", tags=["auth"])
 # router.include_router(program_type.router, prefix="/program_type", tags=["auth"])
 
@@ -555,13 +578,10 @@ router.include_router(
 # router.include_router(
 #     staff_course_allocation.router, prefix="/user_courses", tags=["EMS-configuration"]
 # )
-router.include_router(
-    department.router, prefix="/department", tags=["EMS-configuration"]
-)
+router.include_router(department.router, prefix="/department", tags=["LMS-configuration"])
 # router.include_router(program.router, prefix="/program", tags=["EMS-configuration"])
 # router.include_router(
 #     program_type.router, prefix="/program_type", tags=["EMS-configuration"]
-# )
 
 # # Include routes for academic module
 # router.include_router(
@@ -575,29 +595,7 @@ router.include_router(
 #     event_calender.router, prefix="/event_calender", tags=["EMS-academic"]
 # )
 # router.include_router(semester.router, prefix="/semester", tags=["EMS-academic"])
-# router.include_router(
-#     class_time_table.router, prefix="/class_time_table", tags=["EMS-academic"]
-# )
-# router.include_router(
-#     bulk_course_import.router, prefix="/bulk_course_import", tags=["EMS-academic"]
-# )
-
-# # Include routes for registartion module
-# router.include_router(
-#     student_admission_lite.router,
-#     prefix="/registration_std_lite",
-#     tags=["EMS-registartion"],
-# )
-# router.include_router(
-#     student_admission.router, prefix="/registration_std", tags=["EMS-registartion"]
-# )
-# router.include_router(
-#     bulk_course_registration.router, prefix="/bulk_reg", tags=["EMS-registartion"]
-# )
-# router.include_router(
-#     course_registration.router, prefix="/course_reg", tags=["EMS-registartion"]
-# )
-# router.include_router(
+# router.include_router(d
 #     student_allocation.router, prefix="/student_alc", tags=["EMS-registartion"]
 # )
 # router.include_router(
@@ -683,7 +681,7 @@ router.include_router(
 # )
 # router.include_router(rollback.router, prefix="/rollback", tags=["EMS-examination"])
 # router.include_router(
-#     exam_time_table.router, prefix="/exam_time_table", tags=["EMS-examination"]
+#     exam_time_table.router, prefix="/exam_time_table", tags=["EMS-examination"]app/api/v1/routes.py
 # )
 
 

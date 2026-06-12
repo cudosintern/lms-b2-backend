@@ -1,12 +1,14 @@
 from datetime import datetime
 from fastapi import APIRouter,Depends, Header
 from sqlalchemy.orm import Session
-from ......utils.comman_validation import check_common_validation
-from ......utils.auth_helper import get_current_user
-from ......utils.http_return_helper import returnException, returnSuccess
+from app.utils.comman_validation import check_common_validation
+from app.utils.auth_helper import get_current_user
+from app.utils.http_return_helper import returnException, returnSuccess
+from app.utils.auth_helper import get_current_user  # if used
+from app.core.database import get_db
+from app.db.models import IEMSDepartment
+
 from .department_schema import DepartmentCreate
-from ......core.database import get_db
-from ......db.models import IEMSDepartment
 
 router = APIRouter()
 

@@ -18,6 +18,5 @@ pip install -r requirements.txt
 2 Command to runserver 
 //Activate created venv and run app
 source ./env/bin/activate
-uvicorn app.main:app --reload
 
 uvicorn app.main:app --reload --host 10.91.0.213 --port 8001
