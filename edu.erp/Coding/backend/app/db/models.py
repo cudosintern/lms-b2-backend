@@ -5955,20 +5955,67 @@ class LMSQuestionnaireType(Base):
 class LMSMentorsGroup(Base):
     __tablename__ = "lms_mentors_group"
 
-    mentors_group_id = Column(Integer, primary_key=True, autoincrement=True)
+    mentors_group_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
 
-    academic_batch_id = Column(Integer, nullable=False)
-    semester_id = Column(Integer, nullable=False)
+    academic_batch_id = Column(
+        Integer,
+        nullable=False
+    )
 
     config_type_id = Column(Integer)
+
     questionnaire_id = Column(Integer)
 
-    mentors_pgm_title = Column(String(100))
+    mentors_pgm_title = Column(
+        String(100)
+    )
+
+    created_by = Column(Integer)
+
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSGroupMentors(Base):
+    __tablename__ = "lms_group_mentors"
+
+    group_mentor_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    mentors_group_terms_id = Column(
+        Integer,
+        nullable=False
+    )
+
+    mentor_id = Column(
+        Integer,
+        nullable=False
+    )
 
     created_by = Column(Integer)
     modified_by = Column(Integer)
 
-    created_date = Column(DateTime, server_default=func.now())
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
     modified_date = Column(
         DateTime,
         server_default=func.now(),
@@ -6000,23 +6047,34 @@ class LMSMentorsGroupTerms(Base):
         onupdate=func.now()
     )
 
-class LMSGroupMentors(Base):
-    __tablename__ = "lms_group_mentors"
+class LMSMapMentor(Base):
+    __tablename__ = "lms_map_mentor"
 
-    group_mentor_id = Column(
+    map_mentor_id = Column(
         Integer,
         primary_key=True,
         autoincrement=True
     )
 
-    mentors_group_terms_id = Column(Integer, nullable=False)
+    mentors_group_id = Column(
+        Integer,
+        nullable=False
+    )
 
-    mentor_id = Column(Integer, nullable=False)
+    mentor_id = Column(
+        Integer,
+        nullable=False
+    )
 
     created_by = Column(Integer)
+
     modified_by = Column(Integer)
 
-    created_date = Column(DateTime, server_default=func.now())
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
     modified_date = Column(
         DateTime,
         server_default=func.now(),
@@ -6042,6 +6100,36 @@ class LMSGroupMentees(Base):
     modified_by = Column(Integer)
 
     created_date = Column(DateTime, server_default=func.now())
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSQuestionnaireFieldSetting(Base):
+    __tablename__ = "lms_questionnaire_field_setting"
+
+    field_setting_id = Column(
+        SmallInteger,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    field_setting_desc = Column(
+        String(200),
+        nullable=True
+    )
+
+    status = Column(SmallInteger, default=1)
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
     modified_date = Column(
         DateTime,
         server_default=func.now(),
