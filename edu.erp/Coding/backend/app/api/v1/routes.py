@@ -1,10 +1,14 @@
 from fastapi import APIRouter
 from ...api.auth import login
 from app.api.v1.cudo_module.curriculum.delivery_method.curriculum_delivery_method import (
-    router as curriculum_delivery_router)
+    router as curriculum_delivery_router
+)
 from app.api.v1.lms_module.department import router as department_router
-from ...api.v1.lms_module import config_type
-from ...api.v1.lms_module import cross_department_mentor
+from app.api.v1.lms_module import config_type
+from app.api.v1.lms_module import cross_department_mentor
+from app.api.v1.lms_module import mentoring
+from app.api.v1.lms_module import mentor_mentee_details
+from app.api.v1.cudo_module.bloom_level.bloom_level import router as bloom_level_router
 
 
 router = APIRouter()
@@ -14,17 +18,42 @@ router.include_router(
     prefix="/department",
     tags=["LMS-configuration"]
 )
+
 router.include_router(
     config_type.router,
     prefix="/config-type",
     tags=["LMS-Configuration"]
 )
+
 router.include_router(
     cross_department_mentor.router,
     prefix="/cross-department-mentor",
     tags=["LMS-Configuration"]
 )
 
+router.include_router(
+    mentoring.router,
+    prefix="/mentoring",
+    tags=["Mentoring"]
+)
+
+router.include_router(
+    mentor_mentee_details.router,
+    prefix="/mentor-mentee",
+    tags=["Mentor Mentee"]
+)
+
+router.include_router(
+    bloom_level_router,
+    prefix="/bloom-level",
+    tags=["CUDO-Configuration"]
+)
+
+router.include_router(
+    curriculum_delivery_router,
+    prefix="/curriculum-delivery",
+    tags=["Curriculum"]
+)
 # from ...api.v1.home import dashboard_info 
 # from ...api.v1.configurations.all_master import all_master
 # from ...api.v1.configurations.usermaster import user_master

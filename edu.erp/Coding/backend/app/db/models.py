@@ -4208,3 +4208,21 @@ class Curriculum(Base):
     crclm_id = Column(Integer, primary_key=True, index=True)
     crclm_name = Column(String(255))
     status = Column(Integer, default=1)
+
+class ConfigType(Base):
+    __tablename__ = "config_type"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    name = Column(String(255), unique=True, nullable=False)
+    status = Column(Integer, default=1)
+    created_at = Column(DateTime, default=func.now())
+
+class CrossDepartmentMentorMap(Base):
+    __tablename__ = "cross_department_mentor_map"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    mentor_id = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE'), nullable=False)
+    mapped_dept_id = Column(Integer, ForeignKey('iems_departments.dept_id', ondelete='CASCADE'), nullable=False)
+    status = Column(Integer, default=1)
+    created_at = Column(DateTime, default=func.now())
+
