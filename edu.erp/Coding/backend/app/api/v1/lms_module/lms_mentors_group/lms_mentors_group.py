@@ -16,7 +16,8 @@ from app.db.models import (
     LMSMapMentor,
     LMSGroupMentors,
     LMSGroupMentees,
-    IEMSAcademicBatch
+    IEMSAcademicBatch,
+    IEMSemester
 )
 
 from .lms_mentors_group_schema import (
@@ -748,6 +749,68 @@ def get_academic_batch_list(
 
             "total_terms":
             row.total_terms
+        })
+
+    return returnSuccess(result)
+
+@router.get(
+    "/get_semesters_by_academic_batch/{academic_batch_id}"
+)
+def get_semesters_by_academic_batch(
+    academic_batch_id: int,
+    db: Session = Depends(get_db)
+):
+
+    academic_batch = db.query(
+        IEMSAcademicBatch
+    ).filter(
+        IEMSAcademicBatch.academic_batch_id ==
+        academic_batch_id
+    ).first()
+
+    if not academic_batch:
+        return returnException(
+            "Academic Batch not found"
+        )
+
+    semesters = db.query(
+        IEMSemester
+    ).filter(
+        IEMSemester.academic_batch_id ==
+        academic_batch_id
+    ).order_by(
+        IEMSemester.semester.asc()
+    ).all()
+
+    result = []
+
+    for row in semesters:
+
+        result.append({
+
+            "semester_id":
+            row.semester_id,
+
+            "semester":
+            row.semester,
+
+            "semester_code":
+            row.semester_code,
+
+            "semester_desc":
+            row.semester_desc,
+
+            "term_name":
+            row.term_name,
+
+            "program_year":
+            row.program_year,
+
+            "academic_start_year":
+            row.academic_start_year,
+
+            "academic_end_year":
+            row.academic_end_year
         })
 
     return returnSuccess(result)
