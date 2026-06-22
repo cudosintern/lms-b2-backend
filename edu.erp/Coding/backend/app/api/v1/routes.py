@@ -65,13 +65,8 @@ from app.api.v1.lms_module.lms_mentors_group.lms_mentors_group import (
     router as lms_mentors_group_router
 )
 
-# from app.api.v1.lms_module.lms_group_mentees.lms_group_mentees import (
-#     router as lms_group_mentees_router
-# )
+from app.api.v1.lms_module.lms_mentoring_session.lms_mentoring_session import router as mentoring_session_router
 
-# from app.api.v1.lms_module.lms_mentors_group_terms.lms_mentors_group_terms import (
-#     router as lms_mentors_group_terms_router
-# )
 router = APIRouter()
 
 # Include auth routes
@@ -541,15 +536,9 @@ router.include_router(
     tags=["LMS Mentors Group"]
 )
 
-# router.include_router(
-#     lms_group_mentees_router,
-#     prefix="/lms_group_mentees",
-#     tags=["LMS Group Mentees"]
-# )
-
-# router.include_router(
-#     lms_mentors_group_terms_router,
-#     prefix="/lms_mentors_group_terms",
-#     tags=["LMS Mentors Group Terms"]
-# )
+router.include_router(
+    mentoring_session_router,
+    prefix="/mentoring-session",
+    tags=["Mentoring Session"]
+)
 

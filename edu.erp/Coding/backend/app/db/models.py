@@ -6135,3 +6135,117 @@ class LMSQuestionnaireFieldSetting(Base):
         server_default=func.now(),
         onupdate=func.now()
     )
+
+class LMSMentoringSchedule(Base):
+    __tablename__ = "lms_mentoring_schedule"
+
+    schedule_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    mentors_group_terms_id = Column(
+        Integer,
+        nullable=False
+    )
+
+    questionnaire_id = Column(
+        Integer,
+        nullable=False
+    )
+
+    session_agenda = Column(
+        String(1000)
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSMentoringSubGroup(Base):
+    __tablename__ = "lms_mentoring_sub_group"
+
+    sub_group_id = Column(Integer, primary_key=True, autoincrement=True)
+
+    schedule_id = Column(Integer, nullable=False)
+
+    sub_group_name = Column(String(100))
+
+    location = Column(String(100))
+
+    created_by = Column(Integer)
+
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSMentoringSubGrpDate(Base):
+    __tablename__ = "lms_mentoring_sub_grp_date"
+
+    sub_group_date_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    sub_group_id = Column(Integer, nullable=False)
+
+    start_date = Column(Date)
+
+    end_date = Column(Date)
+
+    start_time = Column(Time)
+
+    end_time = Column(Time)
+
+    status = Column(Integer, default=0)
+
+    created_by = Column(Integer)
+
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+class LMSMapMenteeSchedule(Base):
+    __tablename__ = "lms_map_mentee_schedule"
+
+    map_mentee_schedule_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    schedule_id = Column(Integer, nullable=False)
+
+    student_id = Column(Integer, nullable=False)
+
+    sub_group_id = Column(Integer, nullable=False)
