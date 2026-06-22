@@ -15,7 +15,8 @@ from app.db.models import (
     LMSMentorsGroupTerms,
     LMSMapMentor,
     LMSGroupMentors,
-    LMSGroupMentees
+    LMSGroupMentees,
+    IEMSAcademicBatch
 )
 
 from .lms_mentors_group_schema import (
@@ -710,6 +711,43 @@ def get_groups_by_academic_batch(
             "config_type_id": group.config_type_id,
             "questionnaire_id": group.questionnaire_id,
             "mentors": mentors_list
+        })
+
+    return returnSuccess(result)
+
+@router.get("/get_academic_batch_list")
+def get_academic_batch_list(
+    db: Session = Depends(get_db)
+):
+
+    academic_batches = db.query(
+        IEMSAcademicBatch
+    ).filter(
+        IEMSAcademicBatch.status == 1
+    ).order_by(
+        IEMSAcademicBatch.academic_batch_desc.asc()
+    ).all()
+
+    result = []
+
+    for row in academic_batches:
+
+        result.append({
+
+            "academic_batch_id":
+            row.academic_batch_id,
+
+            "academic_batch_code":
+            row.academic_batch_code,
+
+            "academic_batch_desc":
+            row.academic_batch_desc,
+
+            "academic_year":
+            row.academic_year,
+
+            "total_terms":
+            row.total_terms
         })
 
     return returnSuccess(result)
