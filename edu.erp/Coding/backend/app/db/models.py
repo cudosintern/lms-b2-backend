@@ -6249,3 +6249,343 @@ class LMSMapMenteeSchedule(Base):
     student_id = Column(Integer, nullable=False)
 
     sub_group_id = Column(Integer, nullable=False)
+
+class LMSMenteeQuestionnaireResponse(Base):
+    __tablename__ = "lms_mentee_questionnaire_response"
+
+    questionnaire_response_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    student_id = Column(
+        Integer,
+        ForeignKey(
+            "iems_students.student_id",
+            ondelete="CASCADE"
+        ),
+        nullable=False
+    )
+
+    questionnaire_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_questionnaires.questionnaire_id",
+            ondelete="CASCADE"
+        ),
+        nullable=False
+    )
+
+    schedule_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_mentoring_schedule.schedule_id",
+            ondelete="CASCADE"
+        ),
+        nullable=False
+    )
+
+    sub_group_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_mentoring_sub_group.sub_group_id",
+            ondelete="CASCADE"
+        )
+    )
+
+    sub_group_date_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_mentoring_sub_grp_date.sub_group_date_id",
+            ondelete="CASCADE"
+        )
+    )
+
+    created_by = Column(
+        Integer,
+        ForeignKey("iems_users.id")
+    )
+
+    modified_by = Column(
+        Integer,
+        ForeignKey("iems_users.id")
+    )
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    answers = relationship(
+        "LMSMenteeQuestionnaireResponseQue",
+        back_populates="response",
+        cascade="all, delete-orphan"
+    )
+
+class LMSMenteeQuestionnaireResponseQue(Base):
+    __tablename__ = "lms_mentee_questionnaire_response_que"
+
+    questionnaire_response_que_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    questionnaire_response_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_mentee_questionnaire_response.questionnaire_response_id",
+            ondelete="CASCADE"
+        ),
+        nullable=False
+    )
+
+    questionnaire_que_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_questionnaires_questions.questionnaire_que_id",
+            ondelete="CASCADE"
+        ),
+        nullable=False
+    )
+
+    text_answer = Column(Text)
+
+    created_by = Column(
+        Integer,
+        ForeignKey("iems_users.id")
+    )
+
+    modified_by = Column(
+        Integer,
+        ForeignKey("iems_users.id")
+    )
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    response = relationship(
+        "LMSMenteeQuestionnaireResponse",
+        back_populates="answers"
+    )
+
+    selected_options = relationship(
+        "LMSMenteeQuestionnaireResponseOption",
+        back_populates="answer",
+        cascade="all, delete-orphan"
+    )
+
+class LMSMenteeQuestionnaireResponseOption(Base):
+    __tablename__ = "lms_mentee_questionnaire_response_option"
+
+    questionnaire_response_option_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    questionnaire_response_que_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_mentee_questionnaire_response_que.questionnaire_response_que_id",
+            ondelete="CASCADE"
+        ),
+        nullable=False
+    )
+
+    questionnaire_options_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_questionnaires_options.questionnaire_options_id",
+            ondelete="CASCADE"
+        ),
+        nullable=False
+    )
+
+    specification = Column(Text)
+
+    created_by = Column(
+        Integer,
+        ForeignKey("iems_users.id")
+    )
+
+    modified_by = Column(
+        Integer,
+        ForeignKey("iems_users.id")
+    )
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    answer = relationship(
+        "LMSMenteeQuestionnaireResponseQue",
+        back_populates="selected_options"
+    )
+
+class LMSMMPSessionSuggestion(Base):
+    __tablename__ = "lms_mmp_session_suggestion"
+
+    session_suggestion_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    schedule_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_mentoring_schedule.schedule_id",
+            ondelete="CASCADE"
+        )
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    generic_comments = relationship(
+        "LMSMMPSessionSuggestionGenericComments",
+        back_populates="session",
+        cascade="all, delete-orphan"
+    )
+
+    individual_comments = relationship(
+        "LMSMMPSessionSuggestionIndividualComments",
+        back_populates="session",
+        cascade="all, delete-orphan"
+    )
+
+class LMSMMPSessionSuggestionGenericComments(Base):
+    __tablename__ = "lms_mmp_session_suggestion_generic_comments"
+
+    generic_comment_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    session_suggestion_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_mmp_session_suggestion.session_suggestion_id",
+            ondelete="CASCADE"
+        )
+    )
+
+    comment = Column(String(2000))
+    attachment = Column(String(200))
+
+    suggestion_type = Column(
+        SmallInteger,
+        default=0
+    )
+
+    user_type = Column(
+        SmallInteger,
+        default=0
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    session = relationship(
+        "LMSMMPSessionSuggestion",
+        back_populates="generic_comments"
+    )
+
+class LMSMMPSessionSuggestionIndividualComments(Base):
+    __tablename__ = "lms_mmp_session_suggestion_individual_comments"
+
+    individual_comment_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    session_suggestion_id = Column(
+        Integer,
+        ForeignKey(
+            "lms_mmp_session_suggestion.session_suggestion_id",
+            ondelete="CASCADE"
+        )
+    )
+
+    comment = Column(String(2000))
+    attachment = Column(String(200))
+
+    suggestion_type = Column(
+        SmallInteger,
+        default=0
+    )
+
+    from_user_id = Column(Integer)
+
+    mentee_id = Column(Integer)
+
+    from_user_type = Column(
+        SmallInteger,
+        default=0
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    session = relationship(
+        "LMSMMPSessionSuggestion",
+        back_populates="individual_comments"
+    )

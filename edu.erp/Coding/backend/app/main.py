@@ -6,7 +6,15 @@ from app.core.database import engine
 # Disabled auto table creation - database schema is already finalized in HeidiSQL
 # Base.metadata.create_all(bind=engine)
 
+from fastapi.staticfiles import StaticFiles
+
 app = FastAPI()
+
+app.mount(
+    "/uploads",
+    StaticFiles(directory="uploads"),
+    name="uploads"
+)
 
 origins = [
     "http://localhost:3000",  # React frontend URL

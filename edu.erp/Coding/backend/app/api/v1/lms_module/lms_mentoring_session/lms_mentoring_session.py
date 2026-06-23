@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Form, UploadFile, File
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -20,12 +20,97 @@ from app.db.models import (
     LMSMentoringSubGroup,
     LMSMentoringSubGrpDate,
     LMSMapMenteeSchedule,
-    IEMStudents
+
+    LMSMenteeQuestionnaireResponse,
+    LMSMenteeQuestionnaireResponseQue,
+    LMSMenteeQuestionnaireResponseOption,
+
+    LMSMMPSessionSuggestion,
+    LMSMMPSessionSuggestionGenericComments,
+    LMSMMPSessionSuggestionIndividualComments,
+
+    LMSQuestionnairesQuestions,
+    LMSQuestionnairesOptions,
+
+    IEMStudents,
+    IEMSUsers
 )
 
-from .lms_mentoring_session_schema import (
-    MentoringSessionCreate
+from .lms_mentoring_session_schema import *
+
+import uuid
+import shutil
+import os
+UPLOAD_DIR = "uploads/mentoring_comments"
+
+os.makedirs(
+    UPLOAD_DIR,
+    exist_ok=True
 )
+
+ALLOWED_EXTENSIONS = [
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "jpg",
+    "jpeg",
+    "png"
+]
+
+MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
+
+def validate_attachment(file):
+
+    if not file:
+        return
+
+    ext = file.filename.split(".")[-1].lower()
+
+    if ext not in ALLOWED_EXTENSIONS:
+        raise Exception(
+            "Only pdf, doc, docx, xls, xlsx, jpg, jpeg, png allowed"
+        )
+
+    content = file.file.read()
+
+    if len(content) > MAX_FILE_SIZE:
+        raise Exception(
+            "Maximum file size allowed is 2 MB"
+        )
+
+    file.file.seek(0)
+
+def save_uploaded_file(file):
+
+    if not file:
+        return None
+
+    ext = file.filename.split(".")[-1]
+
+    file_name = (
+        str(uuid.uuid4())
+        + "."
+        + ext
+    )
+
+    file_path = os.path.join(
+        UPLOAD_DIR,
+        file_name
+    )
+
+    with open(
+        file_path,
+        "wb"
+    ) as buffer:
+
+        shutil.copyfileobj(
+            file.file,
+            buffer
+        )
+
+    return file_name
 
 router = APIRouter()
 
@@ -651,3 +736,383 @@ def delete_mentoring_session(
     return returnSuccess(
         "Session deleted successfully"
     )
+
+@router.get("/get_mentoring_session_mentees/{schedule_id}")
+def get_mentoring_session_mentees(
+    schedule_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+
+        data = (
+            db.query(
+                LMSMapMenteeSchedule.student_id,
+                IEMStudents.regno,
+                IEMStudents.name,
+                LMSMapMenteeSchedule.sub_group_id
+            )
+            .join(
+                IEMStudents,
+                IEMStudents.student_id ==
+                LMSMapMenteeSchedule.student_id
+            )
+            .filter(
+                LMSMapMenteeSchedule.schedule_id ==
+                schedule_id
+            )
+            .all()
+        )
+
+        result = []
+
+        for row in data:
+            result.append({
+                "student_id": row.student_id,
+                "regno": row.regno,
+                "student_name": row.name,
+                "sub_group_id": row.sub_group_id
+            })
+
+        return returnSuccess(result)
+
+    except Exception as e:
+        return returnException(str(e))
+    
+@router.post("/get_mentee_questionnaire_response")
+def get_mentee_questionnaire_response(
+    req: MenteeResponseRequest,
+    db: Session = Depends(get_db)
+):
+    try:
+
+        response = (
+            db.query(
+                LMSMenteeQuestionnaireResponse
+            )
+            .filter(
+                LMSMenteeQuestionnaireResponse.schedule_id ==
+                req.schedule_id,
+                LMSMenteeQuestionnaireResponse.student_id ==
+                req.student_id
+            )
+            .first()
+        )
+
+        if not response:
+            return returnSuccess([])
+
+        result = []
+
+        answers = (
+            db.query(
+                LMSMenteeQuestionnaireResponseQue,
+                LMSQuestionnairesQuestions
+            )
+            .join(
+                LMSQuestionnairesQuestions,
+                LMSQuestionnairesQuestions.questionnaire_que_id ==
+                LMSMenteeQuestionnaireResponseQue.questionnaire_que_id
+            )
+            .filter(
+                LMSMenteeQuestionnaireResponseQue.questionnaire_response_id ==
+                response.questionnaire_response_id
+            )
+            .all()
+        )
+
+        for ans, que in answers:
+
+            options = (
+                db.query(
+                    LMSMenteeQuestionnaireResponseOption,
+                    LMSQuestionnairesOptions
+                )
+                .join(
+                    LMSQuestionnairesOptions,
+                    LMSQuestionnairesOptions.questionnaire_options_id ==
+                    LMSMenteeQuestionnaireResponseOption.questionnaire_options_id
+                )
+                .filter(
+                    LMSMenteeQuestionnaireResponseOption.questionnaire_response_que_id ==
+                    ans.questionnaire_response_que_id
+                )
+                .all()
+            )
+
+            selected_options = []
+
+            for op, opt in options:
+                selected_options.append({
+                    "option_id": opt.questionnaire_options_id,
+                    "option_name": opt.que_option,
+                    "specification": op.specification
+                })
+
+            result.append({
+                "question_id": que.questionnaire_que_id,
+                "question": que.question,
+                "text_answer": ans.text_answer,
+                "selected_options": selected_options
+            })
+
+        return returnSuccess(result)
+
+    except Exception as e:
+        return returnException(str(e))
+    
+@router.post(
+    "/save_generic_comment"
+)
+def save_generic_comment(
+    schedule_id: int = Form(...),
+    comment: str = Form(...),
+    suggestion_type: int = Form(0),
+    user_type: int = Form(0),
+    attachment: UploadFile = File(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    try:
+
+        validate_attachment(
+            attachment
+        )
+
+        file_name = save_uploaded_file(
+            attachment
+        )
+
+        suggestion = db.query(
+            LMSMMPSessionSuggestion
+        ).filter(
+            LMSMMPSessionSuggestion.schedule_id ==
+            schedule_id
+        ).first()
+
+        if not suggestion:
+
+            suggestion = LMSMMPSessionSuggestion(
+                schedule_id=schedule_id,
+                created_by=current_user["user_id"]
+            )
+
+            db.add(suggestion)
+            db.flush()
+
+        db_comment = (
+            LMSMMPSessionSuggestionGenericComments(
+                session_suggestion_id=
+                    suggestion.session_suggestion_id,
+
+                comment=comment,
+
+                attachment=file_name,
+
+                suggestion_type=suggestion_type,
+
+                user_type=user_type,
+
+                created_by=
+                    current_user["user_id"]
+            )
+        )
+
+        db.add(db_comment)
+
+        db.commit()
+
+        return returnSuccess(
+            "Comment Saved Successfully"
+        )
+
+    except Exception as e:
+
+        db.rollback()
+
+        return returnException(
+            str(e)
+        )
+    
+@router.post("/save_individual_comment")
+def save_individual_comment(
+    schedule_id: int = Form(...),
+    mentee_id: int = Form(...),
+    comment: str = Form(...),
+    suggestion_type: int = Form(0),
+    attachment: UploadFile = File(None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user)
+):
+
+    try:
+
+        validate_attachment(
+            attachment
+        )
+
+        file_name = save_uploaded_file(
+            attachment
+        )
+
+        suggestion = db.query(
+            LMSMMPSessionSuggestion
+        ).filter(
+            LMSMMPSessionSuggestion.schedule_id ==
+            schedule_id
+        ).first()
+
+        if not suggestion:
+
+            suggestion = LMSMMPSessionSuggestion(
+                schedule_id=schedule_id,
+                created_by=current_user["user_id"]
+            )
+
+            db.add(suggestion)
+            db.flush()
+
+        db_comment = (
+            LMSMMPSessionSuggestionIndividualComments(
+                session_suggestion_id=
+                    suggestion.session_suggestion_id,
+
+                comment=comment,
+
+                attachment=file_name,
+
+                suggestion_type=
+                    suggestion_type,
+
+                from_user_id=
+                    current_user["user_id"],
+
+                mentee_id=
+                    mentee_id,
+
+                from_user_type=1,
+
+                created_by=
+                    current_user["user_id"]
+            )
+        )
+
+        db.add(db_comment)
+
+        db.commit()
+
+        return returnSuccess(
+            "Individual Comment Saved Successfully"
+        )
+
+    except Exception as e:
+
+        db.rollback()
+
+        return returnException(
+            str(e)
+        )
+    
+@router.get("/get_generic_comments/{schedule_id}")
+def get_generic_comments(
+    schedule_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+
+        data = db.query(
+            LMSMMPSessionSuggestionGenericComments,
+            IEMSUsers.first_name
+        ).join(
+            LMSMMPSessionSuggestion,
+            LMSMMPSessionSuggestion.session_suggestion_id ==
+            LMSMMPSessionSuggestionGenericComments.session_suggestion_id
+        ).outerjoin(
+            IEMSUsers,
+            IEMSUsers.id ==
+            LMSMMPSessionSuggestionGenericComments.created_by
+        ).filter(
+            LMSMMPSessionSuggestion.schedule_id ==
+            schedule_id
+        ).all()
+
+        result = []
+
+        for row, user in data:
+
+            result.append({
+                "generic_comment_id":
+                    row.generic_comment_id,
+
+                "comment":
+                    row.comment,
+
+                "attachment":
+                    row.attachment,
+
+                "created_by":
+                    user,
+
+                "created_date":
+                    row.created_date
+            })
+
+        return returnSuccess(result)
+
+    except Exception as e:
+
+        return returnException(str(e))
+    
+@router.get(
+    "/get_individual_comments/{schedule_id}/{mentee_id}"
+)
+def get_individual_comments(
+    schedule_id: int,
+    mentee_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+
+        data = db.query(
+            LMSMMPSessionSuggestionIndividualComments
+        ).join(
+            LMSMMPSessionSuggestion,
+            LMSMMPSessionSuggestion.session_suggestion_id ==
+            LMSMMPSessionSuggestionIndividualComments.session_suggestion_id
+        ).filter(
+            LMSMMPSessionSuggestion.schedule_id ==
+            schedule_id,
+
+            LMSMMPSessionSuggestionIndividualComments.mentee_id ==
+            mentee_id
+        ).all()
+
+        result = []
+
+        for row in data:
+
+            result.append({
+                "individual_comment_id":
+                    row.individual_comment_id,
+
+                "comment":
+                    row.comment,
+
+                "attachment":
+                    row.attachment,
+
+                "mentee_id":
+                    row.mentee_id,
+
+                "from_user_id":
+                    row.from_user_id,
+
+                "created_date":
+                    row.created_date
+            })
+
+        return returnSuccess(result)
+
+    except Exception as e:
+
+        return returnException(str(e))
