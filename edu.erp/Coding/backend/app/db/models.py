@@ -6589,3 +6589,129 @@ class LMSMMPSessionSuggestionIndividualComments(Base):
         "LMSMMPSessionSuggestion",
         back_populates="individual_comments"
     )
+
+class LMSCrossDeptUsers(Base):
+    __tablename__ = "lms_cross_dept_users"
+
+    cross_dept_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    to_dept_id = Column(
+        Integer,
+        ForeignKey("iems_department.dept_id")
+    )
+
+    from_dept_id = Column(
+        Integer,
+        ForeignKey("iems_department.dept_id")
+    )
+
+    faculty_user_id = Column(
+        Integer,
+        ForeignKey("iems_users.id")
+    )
+
+    notify_dept_hod = Column(
+        Boolean,
+        default=False
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now()
+    )
+
+    faculty = relationship(
+        "IEMSUsers",
+        foreign_keys=[faculty_user_id]
+    )
+
+    from_department = relationship(
+        "IEMSDepartment",
+        foreign_keys=[from_dept_id]
+    )
+
+    to_department = relationship(
+        "IEMSDepartment",
+        foreign_keys=[to_dept_id]
+    )
+
+    curriculums = relationship(
+        "LMSCrossDeptUsersCrclms",
+        back_populates="cross_department",
+        cascade="all, delete-orphan"
+    )
+
+class LMSCrossDeptUsersCrclms(Base):
+    __tablename__ = "lms_cross_dept_users_crclms"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    cross_dept_id = Column(
+        Integer,
+        ForeignKey("lms_cross_dept_users.cross_dept_id")
+    )
+
+    dept_id = Column(
+        Integer,
+        ForeignKey("iems_department.dept_id")
+    )
+
+    faculty_user_id = Column(
+        Integer,
+        ForeignKey("iems_users.id")
+    )
+
+    academic_batch_id = Column(
+        Integer,
+        ForeignKey("iems_academic_batch.academic_batch_id")
+    )
+
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now()
+    )
+
+    cross_department = relationship(
+        "LMSCrossDeptUsers",
+        back_populates="curriculums"
+    )
+
+    faculty = relationship(
+        "IEMSUsers",
+        foreign_keys=[faculty_user_id]
+    )
+
+    department = relationship(
+        "IEMSDepartment",
+        foreign_keys=[dept_id]
+    )
+
+    academic_batch = relationship(
+        "IEMSAcademicBatch"
+    )
