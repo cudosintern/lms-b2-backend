@@ -67,6 +67,8 @@ from app.api.v1.lms_module.lms_mentors_group.lms_mentors_group import (
 
 from app.api.v1.lms_module.lms_mentoring_session.lms_mentoring_session import router as mentoring_session_router
 
+from app.api.v1.lms_module.lms_issues_observations_report.lms_issues_observations_report import router as issues_observations_report_router
+
 router = APIRouter()
 
 # Include auth routes
@@ -540,5 +542,11 @@ router.include_router(
     mentoring_session_router,
     prefix="/mentoring-session",
     tags=["Mentoring Session"]
+)
+
+router.include_router(
+    issues_observations_report_router,
+    prefix="/issues_observations_report",
+    tags=["Issues & Observations Report"]
 )
 

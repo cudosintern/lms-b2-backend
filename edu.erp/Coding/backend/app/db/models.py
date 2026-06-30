@@ -6715,3 +6715,138 @@ class LMSCrossDeptUsersCrclms(Base):
     academic_batch = relationship(
         "IEMSAcademicBatch"
     )
+
+class LMSIssuesObservations(Base):
+    __tablename__ = "lms_issues_observations"
+
+    lms_isnob_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    academic_batch_id = Column(Integer)
+
+    semester_id = Column(Integer)
+
+    ssd_id = Column(Integer)
+
+    student_usn = Column(String(50))
+
+    report_title = Column(
+        String(200),
+        nullable=False
+    )
+
+    counselling_date = Column(DateTime)
+
+    mentor_users_id = Column(
+        Integer,
+        nullable=False
+    )
+
+    purpose_of_meeting_desc = Column(Text)
+
+    observation_desc = Column(Text)
+
+    comm_parent_flag = Column(
+        Integer,
+        default=0
+    )
+
+    comm_high_auth_flag = Column(
+        Integer,
+        default=0
+    )
+
+    mentor_status = Column(
+        Integer,
+        default=0
+    )
+
+    mentee_status = Column(
+        Integer,
+        default=0
+    )
+
+    parent_guardian_status = Column(
+        Integer,
+        default=0
+    )
+
+    created_by = Column(Integer)
+
+    created_date = Column(
+        DateTime,
+        server_default=func.now()
+    )
+
+    modified_by = Column(Integer)
+
+    modified_date = Column(
+        DateTime,
+        server_default=func.now(),
+        onupdate=func.now()
+    )
+
+    is_deleted = Column(
+        Integer,
+        default=0
+    )
+
+    delete_reason_desc = Column(Text)
+
+class LMSIssuesObservationsHistory(Base):
+    __tablename__ = "lms_issues_observations_history"
+
+    history_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    lms_isnob_id = Column(Integer)
+
+    academic_batch_id = Column(Integer)
+
+    semester_id = Column(Integer)
+
+    ssd_id = Column(Integer)
+
+    student_usn = Column(String(50))
+
+    report_title = Column(String(200))
+
+    counselling_date = Column(DateTime)
+
+    mentor_users_id = Column(Integer)
+
+    purpose_of_meeting_desc = Column(Text)
+
+    observation_desc = Column(Text)
+
+    comm_parent_flag = Column(Integer)
+
+    comm_high_auth_flag = Column(Integer)
+
+    mentor_status = Column(Integer)
+
+    mentee_status = Column(Integer)
+
+    parent_guardian_status = Column(Integer)
+
+    created_by = Column(Integer)
+
+    created_date = Column(DateTime)
+
+    modified_by = Column(Integer)
+
+    modified_date = Column(DateTime)
+
+    is_deleted = Column(Integer)
+
+    delete_reason_desc = Column(Text)
+
+    action_type = Column(String(20))
+
+    action_timestamp = Column(DateTime)
