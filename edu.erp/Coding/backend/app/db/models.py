@@ -6304,12 +6304,12 @@ class LMSMenteeQuestionnaireResponse(Base):
 
     created_by = Column(
         Integer,
-        ForeignKey("iems_users.id")
+        ForeignKey("iems_students.student_id")
     )
 
     modified_by = Column(
         Integer,
-        ForeignKey("iems_users.id")
+        ForeignKey("iems_students.student_id")
     )
 
     created_date = Column(
@@ -6360,12 +6360,12 @@ class LMSMenteeQuestionnaireResponseQue(Base):
 
     created_by = Column(
         Integer,
-        ForeignKey("iems_users.id")
+        ForeignKey("iems_students.student_id")
     )
 
     modified_by = Column(
         Integer,
-        ForeignKey("iems_users.id")
+        ForeignKey("iems_students.student_id")
     )
 
     created_date = Column(
@@ -6421,12 +6421,12 @@ class LMSMenteeQuestionnaireResponseOption(Base):
 
     created_by = Column(
         Integer,
-        ForeignKey("iems_users.id")
+        ForeignKey("iems_students.student_id")
     )
 
     modified_by = Column(
         Integer,
-        ForeignKey("iems_users.id")
+        ForeignKey("iems_students.student_id")
     )
 
     created_date = Column(
