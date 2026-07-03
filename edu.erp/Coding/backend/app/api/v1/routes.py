@@ -37,6 +37,13 @@ from app.api.v1.cudo_module.lab_category.lab_category_api import (
     router as lab_category_router
 )
 
+from app.api.v1.cudo_module.board_of_studies.api.bos_member_api import (
+    router as bos_member_router
+)
+
+from app.api.v1.cudo_module.delivery_method.api.delivery_method_api import (
+    router as delivery_method_router
+)
 
 from app.api.v1.cudo_module.manage_knowledge_and_attitude_profile.api import (
     router as manage_knowledge_and_attitude_profile_router
@@ -63,6 +70,10 @@ from app.api.v1.lms_module.lms_questionnaire_que_options.lms_questionnaire_que_o
     router as lms_questionnaire_que_options_router
 )
 
+from app.api.v1.lms_module.lms_student_course_registration.lms_student_course_registration import (
+    router as lms_student_course_registration
+)
+
 router = APIRouter()
 
 # Include auth routes
@@ -82,6 +93,10 @@ router.include_router(login.router, prefix="/staff_student_login", tags=["Login"
 
 router.include_router(
     program_mode_router, prefix="/program_mode", tags=["Program Mode"]
+)
+
+router.include_router(
+    lms_student_course_registration, prefix="/lms_student_course_registration", tags=["LMS-registration"]
 )
 
 router.include_router(
