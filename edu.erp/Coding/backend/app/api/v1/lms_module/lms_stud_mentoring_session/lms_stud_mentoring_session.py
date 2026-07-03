@@ -1,4 +1,10 @@
-from fastapi import APIRouter, Depends
+from fastapi import (
+    APIRouter,
+    Depends,
+    Form,
+    File,
+    UploadFile
+)
 from sqlalchemy.orm import Session
 
 from datetime import datetime
@@ -42,6 +48,81 @@ from app.db.models import (
 )
 
 from .lms_stud_mentoring_session_schema import *
+
+
+import uuid
+import shutil
+import os
+UPLOAD_DIR = "uploads/mentoring_comments"
+
+os.makedirs(
+    UPLOAD_DIR,
+    exist_ok=True
+)
+
+ALLOWED_EXTENSIONS = [
+    "pdf",
+    "doc",
+    "docx",
+    "xls",
+    "xlsx",
+    "jpg",
+    "jpeg",
+    "png"
+]
+
+MAX_FILE_SIZE = 2 * 1024 * 1024  # 2 MB
+
+def validate_attachment(file):
+
+    if not file:
+        return
+
+    ext = file.filename.split(".")[-1].lower()
+
+    if ext not in ALLOWED_EXTENSIONS:
+        raise Exception(
+            "Only pdf, doc, docx, xls, xlsx, jpg, jpeg, png allowed"
+        )
+
+    content = file.file.read()
+
+    if len(content) > MAX_FILE_SIZE:
+        raise Exception(
+            "Maximum file size allowed is 2 MB"
+        )
+
+    file.file.seek(0)
+
+def save_uploaded_file(file):
+
+    if not file:
+        return None
+
+    ext = file.filename.split(".")[-1]
+
+    file_name = (
+        str(uuid.uuid4())
+        + "."
+        + ext
+    )
+
+    file_path = os.path.join(
+        UPLOAD_DIR,
+        file_name
+    )
+
+    with open(
+        file_path,
+        "wb"
+    ) as buffer:
+
+        shutil.copyfileobj(
+            file.file,
+            buffer
+        )
+
+    return file_name
 
 router = APIRouter()
 
@@ -333,15 +414,28 @@ def get_questionnaire(
 
         question_list = []
 
-        # --------------------------------------------------
-        # Prepare Question List
-        # --------------------------------------------------
         for question, que_type in questions:
 
-            options = (
-                db.query(
-                    LMSQuestionnairesOptions
+            response_que = None
+
+            if submitted_response:
+                response_que = (
+                    db.query(LMSMenteeQuestionnaireResponseQue)
+                    .filter(
+                        LMSMenteeQuestionnaireResponseQue.questionnaire_response_id ==
+                        submitted_response.questionnaire_response_id,
+
+                        LMSMenteeQuestionnaireResponseQue.questionnaire_que_id ==
+                        question.questionnaire_que_id
+                    )
+                    .first()
                 )
+
+            # -----------------------------
+            # Fetch Options
+            # -----------------------------
+            options = (
+                db.query(LMSQuestionnairesOptions)
                 .filter(
                     LMSQuestionnairesOptions.questionnaire_que_id ==
                     question.questionnaire_que_id
@@ -353,65 +447,80 @@ def get_questionnaire(
 
             for option in options:
 
+                selected = False
+                specification = None
+
+                if response_que:
+
+                    selected_option = (
+                        db.query(LMSMenteeQuestionnaireResponseOption)
+                        .filter(
+                            LMSMenteeQuestionnaireResponseOption.questionnaire_response_que_id ==
+                            response_que.questionnaire_response_que_id,
+
+                            LMSMenteeQuestionnaireResponseOption.questionnaire_options_id ==
+                            option.questionnaire_options_id
+                        )
+                        .first()
+                    )
+
+                    if selected_option:
+                        selected = True
+                        specification = selected_option.specification
+
                 option_list.append({
-
-                    "option_id":
-                        option.questionnaire_options_id,
-
-                    "option":
-                        option.que_option,
-
-                    "specify_flag":
-                        option.specify_flag
-
+                    "option_id": option.questionnaire_options_id,
+                    "option": option.que_option,
+                    "specify_flag": option.specify_flag,
+                    "selected": selected,
+                    "specification": specification
                 })
 
+            # -----------------------------
+            # Append Question (OUTSIDE option loop)
+            # -----------------------------
             question_list.append({
 
-                "question_id":
-                    question.questionnaire_que_id,
+                "question_id": question.questionnaire_que_id,
 
-                "question_no":
-                    question.que_no,
+                "question_no": question.que_no,
 
-                "question":
-                    question.question,
+                "question": question.question,
 
-                "que_type_id":
-                    que_type.que_type_id,
+                "que_type_id": que_type.que_type_id,
 
-                "question_type":
-                    que_type.que_type_name,
+                "question_type": que_type.que_type_name,
 
-                "mandatory":
-                    question.que_is_mandatory,
+                "mandatory": question.que_is_mandatory,
 
-                "options":
-                    option_list
+                "text_answer":
+                    response_que.text_answer if response_que else None,
+
+                "options": option_list
 
             })
-
         # --------------------------------------------------
         # Final Response
         # --------------------------------------------------
         result = {
 
-            "schedule_id":
-                schedule.schedule_id,
+            "is_submitted": is_submitted,
 
-            "questionnaire_id":
-                questionnaire.questionnaire_id,
+            "questionnaire_response_id":
+                submitted_response.questionnaire_response_id
+                if submitted_response else None,
 
-            "questionnaire_name":
-                questionnaire.questionnaire_name,
+            "schedule_id": schedule.schedule_id,
 
-            "message_to_mentees":
-                questionnaire.message_to_mentees,
+            "questionnaire_id": questionnaire.questionnaire_id,
 
-            "questions":
-                question_list
+            "questionnaire_name": questionnaire.questionnaire_name,
 
+            "message_to_mentees": questionnaire.message_to_mentees,
+
+            "questions": question_list
         }
+        print("Final Question List:", question_list)
 
         return returnSuccess(result)
 
@@ -703,5 +812,587 @@ def save_questionnaire_response(
     except Exception as e:
 
         db.rollback()
+
+        return returnException(str(e))
+    
+@router.post("/save_group_comment")
+def save_group_comment(
+    schedule_id: int = Form(...),
+    student_id: int = Form(...),
+    comment: str = Form(...),
+    suggestion_type: int = Form(0),
+    attachment: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+    try:
+
+        # --------------------------------------------------
+        # Validate Student
+        # --------------------------------------------------
+        student = (
+            db.query(IEMStudents)
+            .filter(
+                IEMStudents.student_id == student_id
+            )
+            .first()
+        )
+
+        if not student:
+            return returnException(
+                "Invalid student."
+            )
+
+        # --------------------------------------------------
+        # Validate Schedule
+        # --------------------------------------------------
+        schedule = (
+            db.query(LMSMentoringSchedule)
+            .filter(
+                LMSMentoringSchedule.schedule_id == schedule_id
+            )
+            .first()
+        )
+
+        if not schedule:
+            return returnException(
+                "Invalid mentoring schedule."
+            )
+
+        # --------------------------------------------------
+        # Validate Student Mapping
+        # --------------------------------------------------
+        mapping = (
+            db.query(LMSMapMenteeSchedule)
+            .filter(
+                LMSMapMenteeSchedule.schedule_id == schedule_id,
+                LMSMapMenteeSchedule.student_id == student_id
+            )
+            .first()
+        )
+
+        if not mapping:
+            return returnException(
+                "Student is not mapped to this mentoring schedule."
+            )
+
+        # --------------------------------------------------
+        # Validate Attachment
+        # --------------------------------------------------
+        validate_attachment(
+            attachment
+        )
+
+        file_name = save_uploaded_file(
+            attachment
+        )
+
+        # --------------------------------------------------
+        # Get/Create Session Suggestion
+        # --------------------------------------------------
+        suggestion = (
+            db.query(LMSMMPSessionSuggestion)
+            .filter(
+                LMSMMPSessionSuggestion.schedule_id ==
+                schedule_id
+            )
+            .first()
+        )
+
+        if not suggestion:
+
+            suggestion = LMSMMPSessionSuggestion(
+
+                schedule_id=schedule_id,
+
+                created_by=student_id,
+
+                modified_by=student_id
+
+            )
+
+            db.add(suggestion)
+
+            db.flush()
+
+        # --------------------------------------------------
+        # Save Group Comment
+        # --------------------------------------------------
+        db_comment = (
+            LMSMMPSessionSuggestionGenericComments(
+
+                session_suggestion_id=
+                    suggestion.session_suggestion_id,
+
+                comment=comment,
+
+                attachment=file_name,
+
+                suggestion_type=suggestion_type,
+
+                user_type=2,      # 2 = Mentee
+
+                created_by=student_id,
+
+                modified_by=student_id
+
+            )
+        )
+
+        db.add(db_comment)
+
+        db.commit()
+
+        return returnSuccess(
+            "Comment added successfully."
+        )
+
+    except Exception as e:
+
+        db.rollback()
+
+        return returnException(str(e))
+    
+@router.post("/save_individual_comment")
+def save_individual_comment(
+    schedule_id: int = Form(...),
+    student_id: int = Form(...),
+    comment: str = Form(...),
+    suggestion_type: int = Form(0),
+    attachment: UploadFile = File(None),
+    db: Session = Depends(get_db)
+):
+    try:
+
+        # --------------------------------------------------
+        # Validate Student
+        # --------------------------------------------------
+        student = (
+            db.query(IEMStudents)
+            .filter(
+                IEMStudents.student_id == student_id
+            )
+            .first()
+        )
+
+        if not student:
+            return returnException(
+                "Invalid student."
+            )
+
+        # --------------------------------------------------
+        # Validate Schedule
+        # --------------------------------------------------
+        schedule = (
+            db.query(LMSMentoringSchedule)
+            .filter(
+                LMSMentoringSchedule.schedule_id == schedule_id
+            )
+            .first()
+        )
+
+        if not schedule:
+            return returnException(
+                "Invalid mentoring schedule."
+            )
+
+        # --------------------------------------------------
+        # Validate Student Mapping
+        # --------------------------------------------------
+        mapping = (
+            db.query(LMSMapMenteeSchedule)
+            .filter(
+                LMSMapMenteeSchedule.schedule_id == schedule_id,
+                LMSMapMenteeSchedule.student_id == student_id
+            )
+            .first()
+        )
+
+        if not mapping:
+            return returnException(
+                "Student is not mapped to this mentoring schedule."
+            )
+
+        # --------------------------------------------------
+        # Validate Attachment
+        # --------------------------------------------------
+        validate_attachment(
+            attachment
+        )
+
+        file_name = save_uploaded_file(
+            attachment
+        )
+
+        # --------------------------------------------------
+        # Get / Create Session Suggestion
+        # --------------------------------------------------
+        suggestion = (
+            db.query(LMSMMPSessionSuggestion)
+            .filter(
+                LMSMMPSessionSuggestion.schedule_id ==
+                schedule_id
+            )
+            .first()
+        )
+
+        if not suggestion:
+
+            suggestion = LMSMMPSessionSuggestion(
+
+                schedule_id=schedule_id,
+
+                created_by=student_id,
+
+                modified_by=student_id
+
+            )
+
+            db.add(suggestion)
+
+            db.flush()
+
+        # --------------------------------------------------
+        # Save Individual Comment
+        # --------------------------------------------------
+        individual_comment = (
+            LMSMMPSessionSuggestionIndividualComments(
+
+                session_suggestion_id=
+                    suggestion.session_suggestion_id,
+
+                comment=comment,
+
+                attachment=file_name,
+
+                suggestion_type=suggestion_type,
+
+                from_user_id=student_id,
+
+                mentee_id=student_id,
+
+                from_user_type=2,      # 2 = Mentee
+
+                created_by=student_id,
+
+                modified_by=student_id
+
+            )
+        )
+
+        db.add(individual_comment)
+
+        db.commit()
+
+        return returnSuccess(
+            "Individual comment saved successfully."
+        )
+
+    except Exception as e:
+
+        db.rollback()
+
+        return returnException(str(e))
+    
+@router.get("/get_group_comments/{schedule_id}/{student_id}")
+def get_group_comments(
+    schedule_id: int,
+    student_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+
+        # --------------------------------------------------
+        # Validate Student
+        # --------------------------------------------------
+        student = (
+            db.query(IEMStudents)
+            .filter(
+                IEMStudents.student_id == student_id
+            )
+            .first()
+        )
+
+        if not student:
+            return returnException(
+                "Invalid student."
+            )
+
+        # --------------------------------------------------
+        # Validate Student Mapping
+        # --------------------------------------------------
+        mapping = (
+            db.query(LMSMapMenteeSchedule)
+            .filter(
+                LMSMapMenteeSchedule.schedule_id == schedule_id,
+                LMSMapMenteeSchedule.student_id == student_id
+            )
+            .first()
+        )
+
+        if not mapping:
+            return returnException(
+                "Student is not mapped to this mentoring schedule."
+            )
+
+        # --------------------------------------------------
+        # Get Session Suggestion
+        # --------------------------------------------------
+        suggestion = (
+            db.query(LMSMMPSessionSuggestion)
+            .filter(
+                LMSMMPSessionSuggestion.schedule_id == schedule_id
+            )
+            .first()
+        )
+
+        if not suggestion:
+            return returnSuccess([])
+
+        # --------------------------------------------------
+        # Get All Group Comments
+        # --------------------------------------------------
+        comments = (
+            db.query(
+                LMSMMPSessionSuggestionGenericComments
+            )
+            .filter(
+                LMSMMPSessionSuggestionGenericComments.session_suggestion_id ==
+                suggestion.session_suggestion_id
+            )
+            .order_by(
+                LMSMMPSessionSuggestionGenericComments.created_date.asc()
+            )
+            .all()
+        )
+
+        result = []
+
+        for row in comments:
+
+            posted_by_name = ""
+
+            # ------------------------------
+            # Mentor
+            # ------------------------------
+            if row.user_type == 1:
+
+                mentor = (
+                    db.query(IEMSUsers)
+                    .filter(
+                        IEMSUsers.id == row.created_by
+                    )
+                    .first()
+                )
+
+                if mentor:
+                    posted_by_name = mentor.first_name
+
+                posted_by_type = "Mentor"
+
+            # ------------------------------
+            # Mentee
+            # ------------------------------
+            else:
+
+                mentee = (
+                    db.query(IEMStudents)
+                    .filter(
+                        IEMStudents.student_id ==
+                        row.created_by
+                    )
+                    .first()
+                )
+
+                if mentee:
+                    posted_by_name = mentee.name
+
+                posted_by_type = "Mentee"
+
+            result.append({
+
+                "generic_comment_id":
+                    row.generic_comment_id,
+
+                "comment":
+                    row.comment,
+
+                "attachment":
+                    row.attachment,
+
+                "suggestion_type":
+                    row.suggestion_type,
+
+                "posted_by_id":
+                    row.created_by,
+
+                "posted_by_name":
+                    posted_by_name,
+
+                "posted_by_type":
+                    posted_by_type,
+
+                "created_date":
+                    row.created_date
+
+            })
+
+        return returnSuccess(result)
+
+    except Exception as e:
+
+        return returnException(str(e))
+    
+
+@router.get("/get_individual_comments/{schedule_id}/{student_id}")
+def get_individual_comments(
+    schedule_id: int,
+    student_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+
+        # --------------------------------------------------
+        # Validate Student
+        # --------------------------------------------------
+        student = (
+            db.query(IEMStudents)
+            .filter(
+                IEMStudents.student_id == student_id
+            )
+            .first()
+        )
+
+        if not student:
+            return returnException(
+                "Invalid student."
+            )
+
+        # --------------------------------------------------
+        # Validate Student Mapping
+        # --------------------------------------------------
+        mapping = (
+            db.query(LMSMapMenteeSchedule)
+            .filter(
+                LMSMapMenteeSchedule.schedule_id == schedule_id,
+                LMSMapMenteeSchedule.student_id == student_id
+            )
+            .first()
+        )
+
+        if not mapping:
+            return returnException(
+                "Student is not mapped to this mentoring schedule."
+            )
+
+        # --------------------------------------------------
+        # Get Session Suggestion
+        # --------------------------------------------------
+        suggestion = (
+            db.query(LMSMMPSessionSuggestion)
+            .filter(
+                LMSMMPSessionSuggestion.schedule_id ==
+                schedule_id
+            )
+            .first()
+        )
+
+        if not suggestion:
+            return returnSuccess([])
+
+        # --------------------------------------------------
+        # Get Conversation
+        # --------------------------------------------------
+        comments = (
+            db.query(
+                LMSMMPSessionSuggestionIndividualComments
+            )
+            .filter(
+                LMSMMPSessionSuggestionIndividualComments.session_suggestion_id ==
+                suggestion.session_suggestion_id,
+
+                LMSMMPSessionSuggestionIndividualComments.mentee_id ==
+                student_id
+            )
+            .order_by(
+                LMSMMPSessionSuggestionIndividualComments.created_date.asc()
+            )
+            .all()
+        )
+
+        result = []
+
+        for row in comments:
+
+            posted_by_name = ""
+
+            # ------------------------------------------
+            # Comment posted by Mentor
+            # ------------------------------------------
+            if row.from_user_type == 1:
+
+                mentor = (
+                    db.query(IEMSUsers)
+                    .filter(
+                        IEMSUsers.id ==
+                        row.from_user_id
+                    )
+                    .first()
+                )
+
+                if mentor:
+                    posted_by_name = mentor.first_name
+
+                posted_by_type = "Mentor"
+
+            # ------------------------------------------
+            # Comment posted by Mentee
+            # ------------------------------------------
+            else:
+
+                mentee = (
+                    db.query(IEMStudents)
+                    .filter(
+                        IEMStudents.student_id ==
+                        row.from_user_id
+                    )
+                    .first()
+                )
+
+                if mentee:
+                    posted_by_name = mentee.name
+
+                posted_by_type = "Mentee"
+
+            result.append({
+
+                "individual_comment_id":
+                    row.individual_comment_id,
+
+                "comment":
+                    row.comment,
+
+                "attachment":
+                    row.attachment,
+
+                "suggestion_type":
+                    row.suggestion_type,
+
+                "posted_by_id":
+                    row.from_user_id,
+
+                "posted_by_name":
+                    posted_by_name,
+
+                "posted_by_type":
+                    posted_by_type,
+
+                "created_date":
+                    row.created_date
+
+            })
+
+        return returnSuccess(result)
+
+    except Exception as e:
 
         return returnException(str(e))
