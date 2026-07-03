@@ -49,6 +49,8 @@ from app.api.v1.cudo_module.manage_knowledge_and_attitude_profile.api import (
     router as manage_knowledge_and_attitude_profile_router
 )
 
+
+
 ##LMS(Questionnaire)
 from app.api.v1.lms_module.lms_mmp_questionnaire.lms_mmp_questionnaire import (
     router as lms_mmp_questionnaire_router
@@ -62,17 +64,25 @@ from app.api.v1.lms_module.lms_questionnaire_type.lms_questionnaire_type import 
     router as lms_questionnaire_type_router
 )
 
-from app.api.v1.lms_module.lms_questionnaire_question.lms_questionnaire_question import (
-    router as lms_questionnaire_question_router
+from app.api.v1.lms_module.lms_questionnaire_field_setting.lms_questionnaire_field_setting import (
+    router as lms_questionnaire_field_setting_router
 )
 
-from app.api.v1.lms_module.lms_questionnaire_que_options.lms_questionnaire_que_options import (
-    router as lms_questionnaire_que_options_router
+from app.api.v1.lms_module.lms_mentors_group.lms_mentors_group import (
+    router as lms_mentors_group_router
 )
 
 from app.api.v1.lms_module.lms_student_course_registration.lms_student_course_registration import (
     router as lms_student_course_registration
 )
+from app.api.v1.lms_module.lms_mentoring_session.lms_mentoring_session import router as mentoring_session_router
+
+from app.api.v1.lms_module.lms_issues_observations_report.lms_issues_observations_report import router as issues_observations_report_router
+
+from app.api.v1.lms_module.lms_stud_issues_observations_report.lms_stud_issues_observations_report import router as stud_issues_observations_report_router
+
+from app.api.v1.lms_module.lms_stud_mentoring_session.lms_stud_mentoring_session import router as stud_mentoring_session_router
+
 
 router = APIRouter()
 
@@ -465,18 +475,18 @@ router.include_router(
 # router.include_router(student_route.static_router)
 
 # include BOARD OF STUDIES (BoS)
-router.include_router(
-    bos_member_router,
-    prefix="/cudos/board-of-studies",
-    tags=["Board Of Studies"]
-)
+# router.include_router(
+#     bos_member_router,
+#     prefix="/cudos/board-of-studies",
+#     tags=["Board Of Studies"]
+# )
 
 # include DELIVERY METHOD
-router.include_router(
-    delivery_method_router,
-    prefix="/cudos/delivery-method",
-    tags=["Delivery Method"]
-)
+# router.include_router(
+#     delivery_method_router,
+#     prefix="/cudos/delivery-method",
+#     tags=["Delivery Method"]
+# )
 
 #include MAP LEVEL WEIGHTAGE
 router.include_router(
@@ -536,13 +546,36 @@ router.include_router(
 )
 
 router.include_router(
-    lms_questionnaire_question_router,
-    prefix="/lms_questionnaire_question",
-    tags=["LMS Questionnaire Questions"]
+    lms_questionnaire_field_setting_router,
+    prefix="/lms_questionnaire_field_setting",
+    tags=["Questionnaire Field Setting"]
 )
 
 router.include_router(
-    lms_questionnaire_que_options_router,
-    prefix="/lms_questionnaire_que_options",
-    tags=["LMS Questionnaire Options"]
+    lms_mentors_group_router,
+    prefix="/lms_mentors_group",
+    tags=["LMS Mentors Group"]
+)
+
+router.include_router(
+    mentoring_session_router,
+    prefix="/mentoring-session",
+    tags=["Mentoring Session"]
+)
+
+router.include_router(
+    issues_observations_report_router,
+    prefix="/issues_observations_report",
+    tags=["Issues & Observations Report"]
+)
+router.include_router(
+    stud_issues_observations_report_router,
+    prefix="/stud_issues_observations_report",
+    tags=["Student Issues & Observations Report"]
+)
+
+router.include_router(
+    stud_mentoring_session_router,
+    prefix="/student_mentoring",
+    tags=["Student Mentoring Session"]
 )
