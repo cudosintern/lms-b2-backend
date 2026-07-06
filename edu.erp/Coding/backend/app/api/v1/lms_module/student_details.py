@@ -175,17 +175,15 @@ def get_curriculums(
         """
         params = {"usn": usn.strip()}
     else:
-        # Fetch curriculums based on which mentoring group the logged-in mentor belongs to
-        user_id = current_user.get("user_id") if current_user else 0
+        # Fetch all curriculums that have mentoring groups configured (so it doesn't show unused departments like CS, ECE if they aren't configured)
         sql = """
             SELECT DISTINCT ab.academic_batch_id AS curriculum_id, ab.academic_batch_code AS curriculum_name
             FROM iems_academic_batch ab
             JOIN lms_mentors_group_terms mgt ON ab.academic_batch_id = mgt.academic_batch_id
-            JOIN lms_group_mentors gm ON mgt.mentors_group_terms_id = gm.mentors_group_terms_id
-            WHERE ab.status = 1 AND gm.mentor_id = :mentor_id
+            WHERE ab.status = 1
             ORDER BY ab.academic_batch_code
         """
-        params = {"mentor_id": user_id}
+        params = {}
 
     results = db.execute(text(sql), params).mappings().all()
     
@@ -258,8 +256,14 @@ def load_student_details(usn: str, db: Session) -> dict:
         raise HTTPException(status_code=404, detail="Student not found")
 
     personal_info = {}
-    addresses = {}
-    education_details = {}
+    addresses = {
+        "permanent": {"address": "", "address2": "", "city": "", "state": "", "country": "", "postal_code": ""},
+        "correspondence": {"address": "", "address2": "", "city": "", "state": "", "country": "", "postal_code": ""}
+    }
+    education_details = {
+        "tenth_percentage": 0.0, "tenth_board": "", "tenth_year": 0,
+        "twelfth_percentage": 0.0, "twelfth_board": "", "twelfth_year": 0
+    }
     questionnaire_responses = []
     marks_details = []
     attendance_details = []
@@ -818,19 +822,19 @@ def export_student_pdf(
     pi = data["personal_info"]
     pi_data = [
         [
-            Paragraph("<b>USN:</b>", normal_text), Paragraph(pi["usn"], normal_text),
-            Paragraph("<b>Full Name:</b>", normal_text), Paragraph(pi["full_name"], normal_text)
+            Paragraph("<b>USN:</b>", normal_text), Paragraph(str(usn), normal_text),
+            Paragraph("<b>Full Name:</b>", normal_text), Paragraph(pi.get("full_name", ""), normal_text)
         ],
         [
-            Paragraph("<b>Email:</b>", normal_text), Paragraph(pi["email"], normal_text),
-            Paragraph("<b>Contact:</b>", normal_text), Paragraph(pi["contact"], normal_text)
+            Paragraph("<b>Email:</b>", normal_text), Paragraph(pi.get("email") or "N/A", normal_text),
+            Paragraph("<b>Contact:</b>", normal_text), Paragraph(pi.get("contact") or "N/A", normal_text)
         ],
         [
-            Paragraph("<b>DOB:</b>", normal_text), Paragraph(pi["dob"], normal_text),
-            Paragraph("<b>Gender:</b>", normal_text), Paragraph(pi["gender"], normal_text)
+            Paragraph("<b>DOB:</b>", normal_text), Paragraph(pi.get("dob") or "N/A", normal_text),
+            Paragraph("<b>Gender:</b>", normal_text), Paragraph(pi.get("gender") or "N/A", normal_text)
         ],
         [
-            Paragraph("<b>Department:</b>", normal_text), Paragraph(pi.get("department", ""), normal_text),
+            Paragraph("<b>Department:</b>", normal_text), Paragraph(pi.get("department") or "N/A", normal_text),
             Paragraph("<b>Program:</b>", normal_text), Paragraph(pi.get("program", ""), normal_text)
         ],
         [

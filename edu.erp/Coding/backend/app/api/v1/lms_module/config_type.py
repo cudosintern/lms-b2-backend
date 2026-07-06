@@ -4,19 +4,7 @@ from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from io import BytesIO
 from fpdf import FPDF
-from pydantic import BaseModel
-
-class ConfigTypeCreate(BaseModel):
-    name: str
-    status: int = 1
-    min_mentees: int | None = None
-    max_mentees: int | None = None
-
-class ConfigTypeUpdate(BaseModel):
-    name: str | None = None
-    status: int | None = None
-    min_mentees: int | None = None
-    max_mentees: int | None = None
+from .config_type_schema import ConfigTypeCreate, ConfigTypeUpdate
 
 from app.core.database import get_db
 from app.db.models import ConfigType
