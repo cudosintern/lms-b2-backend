@@ -1,9 +1,9 @@
 from fastapi import APIRouter, Depends, Header
 from sqlalchemy.orm import Session
 from .....db.models import CudosMapLevelWeightage
-from .....utils.auth_helper import get_current_user
-from .....utils.http_return_helper import returnSuccess, returnException
-from .....core.database import get_db
+from app.utils.auth_helper import get_current_user
+from app.utils.http_return_helper import returnSuccess, returnException
+from app.core.database import get_db
 from pydantic import BaseModel
 from typing import Optional, List
 from datetime import datetime

@@ -5,7 +5,7 @@ from typing import Optional
 
 from app.core.database import get_db
 from app.utils.auth_helper import get_current_user
-from app.api.v1.lms_module.cross_department_mentor_schema import (
+from app.api.v1.lms_module.department_configuration_schema import (
     CrossDepartmentMentorCreate,
     CrossDepartmentMentorUpdate,
     CrossDepartmentMentorResponseWrapper,
@@ -15,7 +15,7 @@ from app.api.v1.lms_module.cross_department_mentor_schema import (
 )
 from app.db.models import LMSCrossDeptUsers, LMSCrossDeptUsersCrclms
 
-router = APIRouter(prefix="", tags=["Cross Department Mentor"])
+router = APIRouter(prefix="", tags=["Department Configuration"])
 
 # Helper to get the logged-in user's home department
 def get_user_dept(current_user: dict, db: Session) -> int:

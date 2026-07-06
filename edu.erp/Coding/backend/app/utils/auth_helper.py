@@ -48,7 +48,11 @@ oauth2_scheme = OAuth2PasswordBearer(tokenUrl="token", auto_error=False)
 # def pad_key(key):
 #     return hashlib.sha256(key.encode()).digest()
 
-def get_current_user(token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db), org_id: Optional[int] = Header(None)):
+from fastapi import Request
+
+def get_current_user(request: Request, token: Optional[str] = Depends(oauth2_scheme), db: Session = Depends(get_db)):
+    org_id_str = request.headers.get("org-id") or request.headers.get("org_id")
+    org_id = int(org_id_str) if org_id_str and org_id_str.isdigit() else None
     try:
         is_auth_required = False
         if is_auth_required:
