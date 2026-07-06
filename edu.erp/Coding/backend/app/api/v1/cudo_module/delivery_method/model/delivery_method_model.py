@@ -1,5 +1,5 @@
 from sqlalchemy import Column, Integer, String, Date
-from app.db.models import Base
+from app.core.database import Base
 
 class CudosDeliveryMethod(Base):
     __tablename__ = 'cudos_delivery_method'

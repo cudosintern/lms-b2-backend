@@ -3,8 +3,8 @@ from sqlalchemy.orm import Session
 from datetime import date
 from typing import List, Optional
 
-from app.api.v1.cudo_module.delivery_method.model.delivery_method_model import CudosDeliveryMethod
-from app.api.v1.cudo_module.delivery_method.schema.delivery_method_schema import CreateDeliveryMethod, \
+from ...delivery_method.model.delivery_method_model import CudosDeliveryMethod
+from ...delivery_method.schema.delivery_method_schema import CreateDeliveryMethod, \
     UpdateDeliveryMethod, DeliveryMethodInDB
 from app.core.database import get_db
 from app.utils.auth_helper import get_current_user

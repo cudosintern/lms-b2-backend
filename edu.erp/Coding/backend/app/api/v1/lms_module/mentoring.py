@@ -264,3 +264,25 @@ def fetch_questionnaire(
             "questions": questions
         }
     }
+
+# ---------------- 8. LIST CURRICULUMS FOR LOGGED IN MENTOR ----------------
+@router.get("/curriculum")
+def list_curriculum(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    mentor_id = current_user.get("user_id")
+
+    sql = """
+        SELECT DISTINCT b.academic_batch_id AS curriculum_id, b.academic_batch_code, b.academic_batch_desc
+        FROM iems_academic_batch b
+        JOIN lms_mentors_group_terms mgt ON b.academic_batch_id = mgt.academic_batch_id
+        JOIN lms_group_mentors gm ON mgt.mentors_group_terms_id = gm.mentors_group_terms_id
+        WHERE gm.mentor_id = :mentor_id
+    """
+    results = db.execute(text(sql), {"mentor_id": mentor_id}).mappings().all()
+    return {"status": "success", "data": list(results)}
+
+# Alias for compatibility with tests
+list_sessions = get_session_history
+

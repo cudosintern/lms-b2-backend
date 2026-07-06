@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from app.access_control.schemas.modules import ModulesData
-from ..models.module import Module
+from app.access_control.models.module import Module
 from ..utils.response_utils import ResponseUtils
 from ...core.database import get_db
 

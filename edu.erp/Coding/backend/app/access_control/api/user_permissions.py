@@ -8,10 +8,10 @@ from sqlalchemy.orm import Session
 from typing import List
 from sqlalchemy.orm import joinedload, aliased
 
-from app.access_control.models.module_route import ModuleRoute
-from app.access_control.models.permission import Permission
-from app.access_control.models.user_permission import UserPermission
-from app.access_control.schemas.user_permissions import (
+from ..models.module_route import ModuleRoute
+from ..models.permission import Permission
+from ..models.user_permission import UserPermission
+from ..schemas.user_permissions import (
     ModuleRoutesDataForUpdate,
     UserPermissionCreate,
     UserPermissionResponse,

@@ -1,8 +1,8 @@
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
-from app.access_control.models.user_role_permission import UserRolePermission
-from app.access_control.schemas.user_role_permissions import UserRolePermissionCreate, UserRolePermissionOut, UserRolePermissionUpdate
+from ..models.user_role_permission import UserRolePermission
+from ..schemas.user_role_permissions import UserRolePermissionCreate, UserRolePermissionOut, UserRolePermissionUpdate
 from app.core.database import get_db
 
 

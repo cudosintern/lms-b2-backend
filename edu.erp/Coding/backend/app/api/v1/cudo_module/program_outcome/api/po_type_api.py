@@ -11,7 +11,7 @@ from app.api.v1.cudo_module.program_outcome.model.po_type_model import PoType
 from app.api.v1.cudo_module.program_outcome.schema.po_type_schema import (
     PoTypeCreate,
     PoTypeUpdate,
-    PoTypeResponse
+    PoTypeResponse,
 )
 
 router = APIRouter()

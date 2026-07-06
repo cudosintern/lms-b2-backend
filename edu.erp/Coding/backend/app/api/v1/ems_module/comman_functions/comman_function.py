@@ -4,7 +4,7 @@ from sqlalchemy import and_, or_, asc, distinct, func, text, update
 from sqlalchemy.orm import Session
 from datetime import datetime
 
-from app.utils.set_password_helper import set_private_password, validate_old_password
+from .utils.set_password_helper import set_private_password, validate_old_password
 from .comman_function_utils import attendance_processing, cia_evaluate_processing, cia_processing, cia_see_processing, \
     drop, faculty_cia_processing, faculty_tw_processing, fetch_branch_change_students, fetch_evaluate_list, \
     fetch_in_eligible_list, fetch_students_attendance, get_absentee, get_branch_change, get_grace_attendance, \

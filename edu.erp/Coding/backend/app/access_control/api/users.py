@@ -5,16 +5,16 @@ import traceback
 from sqlalchemy.orm import Session, joinedload
 from typing import List, Optional
 
-from app.access_control.models.user_permission import UserPermission
-from app.db.models import (
+from ..models.user_permission import UserPermission
+from ...db.models import (
     IEMSUserOrg,
     IEMSUsers,
 )
 from ..middleware.auth_middleware import rbac_bypass
 from ..utils.response_utils import ResponseUtils
-from app.utils.comman_validation import check_common_validation
-from app.access_control.auth.auth_handler import get_current_user
-from app.utils.set_password_helper import set_private_password, set_salt
+from ...utils.comman_validation import check_common_validation
+from ..auth.auth_handler import get_current_user
+from ...utils.set_password_helper import set_private_password, set_salt
 from ...core.database import get_db
 from ..models.user import User
 from ..models.user_role import UserRole
@@ -25,7 +25,7 @@ from ..schemas.modules import ModulesData
 from ..schemas.user import (
     UserCreateUpdatePass, UserResponse, UserResponseAll, UserUpdate
 )
-from app.access_control.middleware.auth_middleware import authorize
+from ..middleware.auth_middleware import authorize
 
 router = APIRouter(prefix="/users", tags=["Users"])
 

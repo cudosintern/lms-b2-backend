@@ -2,15 +2,15 @@ from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from app.core.database import get_db
-from app.api.v1.cudo_module.delivery_method.model.delivery_method_model import CudosDeliveryMethod as MasterDeliveryMethod
-from app.db.models import (
+from ...delivery_method.model.delivery_method_model import CudosDeliveryMethod as MasterDeliveryMethod
+from .db.models import (
     CurriculumDeliveryMethod, 
     CurriculumDeliveryBloom, 
     BloomLevel,
     Curriculum
 )
 
-from app.api.v1.cudo_module.curriculum.delivery_method.curriculum_delivery_method_schema import (
+from .curriculum_delivery_method_schema import (
     CurriculumDeliveryMethodSchema, 
     DeliveryMethodDeleteSchema
 )

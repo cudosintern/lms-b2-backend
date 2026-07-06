@@ -2,9 +2,9 @@ from sqlalchemy.orm import Session
 
 from fastapi import APIRouter, Depends, HTTPException
 
-from app.access_control.models.session import UserSession
-from app.access_control.schemas.user_sessions import SessionCreate, SessionOut, SessionUpdate
-from app.core.database import get_db
+from ..models.session import UserSession
+from ..schemas.user_sessions import SessionCreate, SessionOut, SessionUpdate
+from ...core.database import get_db
 
 router = APIRouter(prefix="/sessions", tags=["user sessions"])
 

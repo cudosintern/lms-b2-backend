@@ -4,35 +4,36 @@ from sqlalchemy.orm import Session
 from sqlalchemy import or_
 # from fastapi.security import OAuth2PasswordRequestForm
 from datetime import datetime, timezone, timedelta
-from ...core.database import get_db
-from ..models.user import User
-from ..models.session import UserSession
-from ..utils.jwt import decode_jwt, create_access_token, generate_tokens
+from app.core.database import get_db
+from app.access_control.models.user import User
+from app.access_control.models.session import UserSession
+from app.access_control.utils.jwt import decode_jwt, create_access_token, generate_tokens
 from ..utils.activity_logger import log_activity
-from ..auth.auth_handler import authenticate_user
-from ...utils.comman_function import (
+from app.access_control.auth.auth_handler import authenticate_user
+from app.utils.comman_function import (
     all_masters_list, fetch_role_list, fetch_user_type, get_academics_event,
     get_academics_event_status, get_admission_type,
     get_blood_group_list_options, get_caste_list, get_category_options,
     get_certificate, get_coursetype_cia_marks, get_coursetype_list_options,
     get_coursetype_options, get_education_details, get_event_status_options,
     get_grade_type_list, get_hall_type_list, get_occupation_list,
-    get_physically_challenged, check_user_type,
+    get_physically_challenged,
     get_quota, get_section_list_options, get_user_designation,
     organization_list, priority_list, religion_list
 )
-from ..auth.oauth import (
+from app.api.auth.login import check_user_type
+from app.access_control.auth.oauth import (
     get_google_access_token, get_google_user_info, get_github_access_token,
     get_github_user_info, authenticate_oauth_user
 )
-from ..schemas.auth import LoginSchema, TokenSchema
-from ..schemas.user import UserResponse
-from ..utils.session_manager import (
+from app.access_control.schemas.auth import LoginSchema, TokenSchema
+from app.access_control.schemas.user import UserResponse
+from app.access_control.utils.session_manager import (
     create_session, is_token_blacklisted, blacklist_token,
     get_active_sessions, revoke_session
 )
-from ..config.settings import settings, limiter
-from ..utils.response_utils import ResponseUtils
+from app.access_control.config.settings import settings, limiter
+from app.access_control.utils.response_utils import ResponseUtils
 
 router = APIRouter(prefix="/auth", tags=["Authentication"])
 

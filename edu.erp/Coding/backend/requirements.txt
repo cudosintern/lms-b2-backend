@@ -5,6 +5,7 @@ uvicorn
 passlib
 mysql-connector-python==9.0.0
 python-jose[cryptography]
+PyJWT
 python-dotenv
 pycryptodome
 python-multipart

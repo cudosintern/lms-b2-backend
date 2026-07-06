@@ -1,58 +1,73 @@
 from fastapi import APIRouter
-from ...api.auth import login
-from app.api.v1.cudo_module.curriculum.delivery_method.curriculum_delivery_method import (
-    router as curriculum_delivery_router
-)
-from app.api.v1.lms_module.department import router as department_router
-from app.api.v1.lms_module import config_type
-from app.api.v1.lms_module import cross_department_mentor
-from app.api.v1.lms_module import mentoring
-from app.api.v1.lms_module import mentor_mentee_details
-from app.api.v1.cudo_module.bloom_level.bloom_level import router as bloom_level_router
+from ..auth import login
+from .cudo_module.curriculum.delivery_method.curriculum_delivery_method import router as curriculum_delivery_router
+from .lms_module.department import router as department_router
+from .lms_module import config_type
+from .lms_module import department_configuration
+from .lms_module import mentoring
+from .lms_module import mentoring_session
+from .lms_module import mentor_list
+from .lms_module import mentor_mentee_details
+from .cudo_module.bloom_level.bloom_level import router as bloom_level_router
+from .ems_module.registration.course_registration import router as course_registration_router
 
 
 router = APIRouter()
 
-router.include_router(
-    department_router,
-    prefix="/department",
-    tags=["LMS-configuration"]
-)
+# router.include_router(
+#     department_router,
+#     prefix="/department",
+#     tags=["LMS-configuration"]
+# )
 
-router.include_router(
-    config_type.router,
-    prefix="/config-type",
-    tags=["LMS-Configuration"]
-)
+# router.include_router(
+#     config_type.router,
+#     prefix="/config-type",
+#     tags=["LMS-Configuration"]
+# )
 
-router.include_router(
-    cross_department_mentor.router,
-    prefix="/cross-department-mentor",
-    tags=["LMS-Configuration"]
-)
+# router.include_router(
+#     department_configuration.router,
+#     prefix="/department-configuration",
+#     tags=["Department Configuration"]
+# )
 
-router.include_router(
-    mentoring.router,
-    prefix="/mentoring",
-    tags=["Mentoring"]
-)
+# router.include_router(
+#     mentoring.router,
+#     prefix="/mentoring",
+#     tags=["Mentoring"]
+# )
 
-router.include_router(
-    mentor_mentee_details.router,
-    prefix="/mentor-mentee",
-    tags=["Mentor Mentee"]
-)
+# router.include_router(
+#     mentoring_session.router
+# )
 
-router.include_router(
-    bloom_level_router,
-    prefix="/bloom-level",
-    tags=["CUDO-Configuration"]
-)
+# router.include_router(
+#     mentor_list.router
+# )
+
+# router.include_router(
+#     mentor_mentee_details.router,
+#     prefix="/mentor-mentee-details",
+#     tags=["Mentor Mentee Details"]
+# )
+
+# router.include_router(
+#     bloom_level_router,
+#     prefix="/bloom-level",
+#     tags=["CUDO-Configuration"]
+# )
 
 router.include_router(
     curriculum_delivery_router,
     prefix="/curriculum-delivery",
     tags=["Curriculum"]
+)
+
+router.include_router(
+    course_registration_router,
+    prefix="/registration",
+    tags=["Course Registration"]
 )
 # from ...api.v1.home import dashboard_info 
 # from ...api.v1.configurations.all_master import all_master
@@ -389,21 +404,21 @@ from ...api.v1.lms_module import department
 # from app.api.v1.transport_module.student_route import student_route
 
 #board of studies members
-from app.api.v1.cudo_module.board_of_studies.api.bos_member_api import (
+from .cudo_module.board_of_studies.api.bos_member_api import (
     router as bos_member_router
 )
 
-from app.api.v1.cudo_module.users.api.user_api import (
+from .cudo_module.users.api.user_api import (
     router as user_router
 )
 
-from app.api.v1.cudo_module.bloom_domain.api.bloom_domain_api import (
+from .cudo_module.bloom_domain.api.bloom_domain_api import (
     router as bloom_domain_router
 )
-from app.api.v1.cudo_module.delivery_method.api.delivery_method_api import (
+from .cudo_module.delivery_method.api.delivery_method_api import (
     router as delivery_method_router
 )
-from app.api.v1.cudo_module.program_mode.api.program_mode_api import (
+from .cudo_module.program_mode.api.program_mode_api import (
     router as program_mode_router
 )
 
@@ -431,17 +446,17 @@ from app.api.v1.cudo_module.manage_knowledge_and_attitude_profile.api import (
 )
 
 
-router = APIRouter()
-router.include_router(department_router, prefix="/department", tags=["LMS-configuration"])
+# router = APIRouter()
+# router.include_router(department_router, prefix="/department", tags=["LMS-configuration"])
 
 router.include_router(
     bloom_domain_router, prefix="/bloom_domain", tags=["Bloom Domain"]
 )
-router.include_router(
-    curriculum_delivery_router,
-    prefix="/curriculum/curriculum_delivery_method",
-    tags=["Curriculum Delivery Method"]
-)
+# router.include_router(
+#     curriculum_delivery_router,
+#     prefix="/curriculum/curriculum_delivery_method",
+#     tags=["Curriculum Delivery Method"]
+# )
 
 router.include_router(
     user_router, prefix="/user", tags=["User"]
@@ -571,7 +586,7 @@ router.include_router(login.router, prefix="/staff_student_login", tags=["auth"]
 # router.include_router(vehicle_schedule.router, prefix="/transport", tags=['transport'])
 
 
-router.include_router(login.router, prefix="/staff_student_login", tags=["Login"])
+# router.include_router(login.router, prefix="/staff_student_login", tags=["Login"])
 
 # Include routes for dashboard module
 # router.include_router(
@@ -583,9 +598,9 @@ router.include_router(login.router, prefix="/staff_student_login", tags=["Login"
 #     comman_function.router, prefix="/comman_function", tags=["EMS-comman_function"]
 # )
 
-router.include_router(
-    bloom_domain_router, prefix="/bloom_domain", tags=["Bloom Domain"]
-)
+# router.include_router(
+#     bloom_domain_router, prefix="/bloom_domain", tags=["Bloom Domain"]
+# )
 
 router.include_router(
     program_mode_router, prefix="/program_mode", tags=["Program Mode"]
@@ -607,7 +622,7 @@ router.include_router(
 # router.include_router(
 #     staff_course_allocation.router, prefix="/user_courses", tags=["EMS-configuration"]
 # )
-router.include_router(department.router, prefix="/department", tags=["LMS-configuration"])
+# router.include_router(department.router, prefix="/department", tags=["LMS-configuration"])
 # router.include_router(program.router, prefix="/program", tags=["EMS-configuration"])
 # router.include_router(
 #     program_type.router, prefix="/program_type", tags=["EMS-configuration"]

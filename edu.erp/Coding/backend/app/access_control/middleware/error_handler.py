@@ -10,8 +10,8 @@ import traceback
 import logging
 from typing import Any, Dict, Optional, Tuple, Type
 import sys
-from app.access_control.utils.response_utils import ResponseUtils
-from app.access_control.config.settings import settings
+from .access_control.utils.response_utils import ResponseUtils
+from .access_control.config.settings import settings
 
 # Configure Logging
 logger = logging.getLogger("uvicorn.error")

@@ -1,28 +1,28 @@
 from fastapi import APIRouter
 
-from app.access_control.api.auth import router as auth_router
-from app.access_control.api.users import router as user_router
-from app.access_control.api.activity_log import router as activity_log_router
-from app.access_control.api.auth_blacklisted_tokens import (
+from .access_control.api.auth import router as auth_router
+from .access_control.api.users import router as user_router
+from .access_control.api.activity_log import router as activity_log_router
+from .access_control.api.auth_blacklisted_tokens import (
     router as auth_blacklisted_tokens_router,
 )
-from app.access_control.api.module_routes import router as module_routes
-from app.access_control.api.modules import router as modules
-from app.access_control.api.organisation import router as organisation
-from app.access_control.api.organisation_type import (
+from .access_control.api.module_routes import router as module_routes
+from .access_control.api.modules import router as modules
+from .access_control.api.organisation import router as organisation
+from .access_control.api.organisation_type import (
     router as organisation_type
 )
-from app.access_control.api.role_menu import router as role_menu
-from app.access_control.api.university import router as university
-from app.access_control.api.user_permissions import router as user_permissions
-from app.access_control.api.menus import router as menus
-from app.access_control.api.roles import router as roles
-from app.access_control.api.user_sessions import router as user_sessions
-from app.access_control.api.user_role_permissions import (
+from .access_control.api.role_menu import router as role_menu
+from .access_control.api.university import router as university
+from .access_control.api.user_permissions import router as user_permissions
+from .access_control.api.menus import router as menus
+from .access_control.api.roles import router as roles
+from .access_control.api.user_sessions import router as user_sessions
+from .access_control.api.user_role_permissions import (
     router as user_role_permissions
 )
-from app.access_control.api.user_roles import router as user_roles
-from app.access_control.api.permissions import router as permissions
+from .access_control.api.user_roles import router as user_roles
+from .access_control.api.permissions import router as permissions
 
 # from app.access_control.middleware.auth_middleware import authorize
 

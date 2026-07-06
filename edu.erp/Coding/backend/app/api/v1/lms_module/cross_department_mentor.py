@@ -1,15 +1,21 @@
 from fastapi import APIRouter, Depends, HTTPException, status
 from sqlalchemy.orm import Session
 from sqlalchemy import text
-from typing import Optional, List
+from typing import Optional
 
 from app.core.database import get_db
 from app.utils.auth_helper import get_current_user
+from app.api.v1.lms_module.cross_department_mentor_schema import (
+    CrossDepartmentMentorCreate,
+    CrossDepartmentMentorUpdate,
+    CrossDepartmentMentorResponseWrapper,
+    CrossDepartmentMentorToResponseWrapper,
+    AvailableMentorResponseWrapper,
+    FilterDepartmentResponseWrapper
+)
+from app.db.models import LMSCrossDeptUsers, LMSCrossDeptUsersCrclms
 
-# Set prefix to empty to avoid routing nesting conflicts with main.py's prefix="/api/v1/cross-mentor"
 router = APIRouter(prefix="", tags=["Cross Department Mentor"])
-
-print("CROSS DEPARTMENT MENTOR LOADED")
 
 # Helper to get the logged-in user's home department
 def get_user_dept(current_user: dict, db: Session) -> int:
@@ -19,14 +25,44 @@ def get_user_dept(current_user: dict, db: Session) -> int:
     ).fetchone()
     if result:
         return result[0]
-    # Fallback to org_id from token header
     return current_user.get("org_id", 1)
 
 
-# ---------------- 1. MENTORS FROM OTHER DEPARTMENTS ----------------
-@router.get("/from-other-departments")
+@router.get("/filter-departments", response_model=FilterDepartmentResponseWrapper)
+def list_filter_departments(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    logged_in_dept = get_user_dept(current_user, db)
+
+    sql = """
+        SELECT DISTINCT d.dept_id, d.dept_name, d.dept_acronym, 
+                        d.dept_code_usn, d.dept_description, d.status
+        FROM lms_cross_dept_users m
+        JOIN iems_department d ON m.from_dept_id = d.dept_id
+        WHERE m.to_dept_id = :logged_in_dept
+    """
+    results = db.execute(text(sql), {"logged_in_dept": logged_in_dept}).mappings().all()
+    return {"status": "success", "data": list(results)}
+
+@router.get("/available-departments", response_model=FilterDepartmentResponseWrapper)
+def list_available_departments(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user)
+):
+    logged_in_dept = get_user_dept(current_user, db)
+
+    sql = """
+        SELECT dept_id, dept_name, dept_acronym, dept_code_usn, dept_description, status
+        FROM iems_department
+        WHERE dept_id != :logged_in_dept AND status = 1
+    """
+    results = db.execute(text(sql), {"logged_in_dept": logged_in_dept}).mappings().all()
+    return {"status": "success", "data": list(results)}
+
+@router.get("/from-other-departments", response_model=CrossDepartmentMentorResponseWrapper)
 def list_mentors_from_other_departments(
-    dept_id: Optional[int] = None, # Home department filter
+    dept_id: Optional[int] = None,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -43,15 +79,14 @@ def list_mentors_from_other_departments(
     """
     params = {"logged_in_dept": logged_in_dept}
     if dept_id is not None:
-        sql += " AND ud.erp_dept_id = :dept_id"
+        sql += " AND m.from_dept_id = :dept_id"
         params["dept_id"] = dept_id
 
     results = db.execute(text(sql), params).mappings().all()
     return {"status": "success", "data": list(results)}
 
 
-# ---------------- 2. MENTORS TO OTHER DEPARTMENTS ----------------
-@router.get("/to-other-departments")
+@router.get("/to-other-departments", response_model=CrossDepartmentMentorToResponseWrapper)
 def list_mentors_to_other_departments(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -70,8 +105,7 @@ def list_mentors_to_other_departments(
     return {"status": "success", "data": list(results)}
 
 
-# ---------------- 3. AVAILABLE MENTORS TO ADD ----------------
-@router.get("/available-mentors")
+@router.get("/available-mentors", response_model=AvailableMentorResponseWrapper)
 def list_available_mentors(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
@@ -93,119 +127,113 @@ def list_available_mentors(
     return {"status": "success", "data": list(results)}
 
 
-# ---------------- 4. ADD CROSS DEPARTMENT MENTOR ----------------
 @router.post("/add")
 def add_cross_department_mentor(
-    payload: dict,
+    payload: CrossDepartmentMentorCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    mentor_id = payload.get("mentor_id")
-    if not mentor_id:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="mentor_id is required"
-        )
-
+    mentor_id = payload.mentor_id
     logged_in_dept = get_user_dept(current_user, db)
     creator_id = current_user.get("user_id")
 
-    # Verify mentor exists and get home dept
     mentor = db.execute(
         text("SELECT erp_dept_id FROM erp_rbac_user_department WHERE erp_user_id = :id AND status = 1 LIMIT 1"),
         {"id": mentor_id}
     ).fetchone()
     if not mentor:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Mentor not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mentor not found")
 
     mentor_dept = mentor[0]
     if mentor_dept == logged_in_dept:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Cannot add mentor from your own department as a cross-department mentor"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Cannot add mentor from your own department")
 
-    # Check duplicates
-    dup = db.execute(
-        text("SELECT cross_dept_id FROM lms_cross_dept_users WHERE faculty_user_id = :mentor_id AND to_dept_id = :logged_in_dept"),
-        {"mentor_id": mentor_id, "logged_in_dept": logged_in_dept}
-    ).fetchone()
+    dup = db.query(LMSCrossDeptUsers).filter(
+        LMSCrossDeptUsers.faculty_user_id == mentor_id,
+        LMSCrossDeptUsers.to_dept_id == logged_in_dept
+    ).first()
+    
     if dup:
-        raise HTTPException(
-            status_code=status.HTTP_400_BAD_REQUEST,
-            detail="Mentor is already mapped to your department"
-        )
+        raise HTTPException(status_code=status.HTTP_400_BAD_REQUEST, detail="Mentor is already mapped")
 
-    db.execute(
-        text("INSERT INTO lms_cross_dept_users (faculty_user_id, to_dept_id, from_dept_id, created_by) VALUES (:mentor_id, :logged_in_dept, :mentor_dept, :creator_id)"),
-        {"mentor_id": mentor_id, "logged_in_dept": logged_in_dept, "mentor_dept": mentor_dept, "creator_id": creator_id}
+    new_mapping = LMSCrossDeptUsers(
+        faculty_user_id=mentor_id,
+        to_dept_id=logged_in_dept,
+        from_dept_id=mentor_dept,
+        created_by=creator_id
     )
+    db.add(new_mapping)
     db.commit()
+    db.refresh(new_mapping)
 
-    # Get the inserted mapping
-    inserted = db.execute(
-        text("SELECT cross_dept_id, faculty_user_id, to_dept_id FROM lms_cross_dept_users WHERE faculty_user_id = :mentor_id AND to_dept_id = :logged_in_dept"),
-        {"mentor_id": mentor_id, "logged_in_dept": logged_in_dept}
-    ).fetchone()
+    # Insert academic batches mapping if provided
+    if payload.academic_batch_ids:
+        for batch_id in payload.academic_batch_ids:
+            batch_map = LMSCrossDeptUsersCrclms(
+                cross_dept_id=new_mapping.cross_dept_id,
+                dept_id=logged_in_dept,
+                faculty_user_id=mentor_id,
+                academic_batch_id=batch_id,
+                created_by=creator_id
+            )
+            db.add(batch_map)
+        db.commit()
 
     return {
         "status": "success",
         "message": "Cross department mentor added successfully",
         "data": {
-            "mapping_id": inserted[0],
-            "mentor_id": inserted[1],
-            "mapped_dept_id": inserted[2],
+            "mapping_id": new_mapping.cross_dept_id,
+            "mentor_id": new_mapping.faculty_user_id,
+            "mapped_dept_id": new_mapping.to_dept_id,
             "status": 1
         }
     }
 
 
-# ---------------- 5. UPDATE MAPPING STATUS ----------------
 @router.put("/update/{id}")
 def update_cross_department_mentor(
     id: int,
-    payload: dict,
+    payload: CrossDepartmentMentorUpdate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    # LMS Cross dept table doesn't seem to have a status column. Just return success
+    mapping = db.query(LMSCrossDeptUsers).filter(LMSCrossDeptUsers.cross_dept_id == id).first()
+    if not mapping:
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mapping not found")
+
+    if payload.academic_batch_ids is not None:
+        db.query(LMSCrossDeptUsersCrclms).filter(LMSCrossDeptUsersCrclms.cross_dept_id == id).delete()
+        for batch_id in payload.academic_batch_ids:
+            batch_map = LMSCrossDeptUsersCrclms(
+                cross_dept_id=id,
+                dept_id=mapping.to_dept_id,
+                faculty_user_id=mapping.faculty_user_id,
+                academic_batch_id=batch_id,
+                created_by=current_user.get("user_id")
+            )
+            db.add(batch_map)
+        db.commit()
+
     return {
         "status": "success",
-        "message": "Mapping status updated (ignored as table doesn't support it)",
-        "data": {
-            "mapping_id": id,
-            "status": payload.get("status", 1)
-        }
+        "message": "Mapping updated successfully",
+        "data": {"mapping_id": id}
     }
 
 
-# ---------------- 6. REMOVE CROSS DEPARTMENT MENTOR ----------------
 @router.delete("/remove/{id}")
 def remove_cross_department_mentor(
     id: int,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    mapping = db.execute(
-        text("SELECT cross_dept_id FROM lms_cross_dept_users WHERE cross_dept_id = :id"),
-        {"id": id}
-    ).fetchone()
+    mapping = db.query(LMSCrossDeptUsers).filter(LMSCrossDeptUsers.cross_dept_id == id).first()
     if not mapping:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Mapping not found"
-        )
+        raise HTTPException(status_code=status.HTTP_404_NOT_FOUND, detail="Mapping not found")
 
-    db.execute(
-        text("DELETE FROM lms_cross_dept_users WHERE cross_dept_id = :id"),
-        {"id": id}
-    )
+    db.query(LMSCrossDeptUsersCrclms).filter(LMSCrossDeptUsersCrclms.cross_dept_id == id).delete()
+    db.delete(mapping)
     db.commit()
 
-    return {
-        "status": "success",
-        "message": "Cross department mentor mapping removed successfully"
-    }
+    return {"status": "success", "message": "Cross department mentor mapping removed successfully"}

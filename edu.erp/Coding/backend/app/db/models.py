@@ -4216,13 +4216,42 @@ class ConfigType(Base):
     name = Column(String(255), unique=True, nullable=False)
     status = Column(Integer, default=1)
     created_at = Column(DateTime, default=func.now())
+    min_mentees = Column(Integer, nullable=True)
+    max_mentees = Column(Integer, nullable=True)
 
 class CrossDepartmentMentorMap(Base):
     __tablename__ = "cross_department_mentor_map"
 
     id = Column(Integer, primary_key=True, autoincrement=True)
     mentor_id = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE'), nullable=False)
-    mapped_dept_id = Column(Integer, ForeignKey('iems_departments.dept_id', ondelete='CASCADE'), nullable=False)
+    mapped_dept_id = Column(Integer, ForeignKey('iems_department.dept_id', ondelete='CASCADE'), nullable=False)
     status = Column(Integer, default=1)
     created_at = Column(DateTime, default=func.now())
+
+class LMSCrossDeptUsers(Base):
+    __tablename__ = "lms_cross_dept_users"
+
+    cross_dept_id = Column(Integer, primary_key=True, autoincrement=True)
+    to_dept_id = Column(Integer, index=True)
+    from_dept_id = Column(Integer, index=True)
+    faculty_user_id = Column(Integer, index=True)
+    notify_dept_hod = Column(Boolean, default=False)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(DateTime, default=func.now())
+    modified_date = Column(DateTime, default=func.now(), onupdate=func.now())
+
+class LMSCrossDeptUsersCrclms(Base):
+    __tablename__ = "lms_cross_dept_users_crclms"
+
+    id = Column(Integer, primary_key=True, autoincrement=True)
+    cross_dept_id = Column(Integer, ForeignKey('lms_cross_dept_users.cross_dept_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=False, index=True)
+    dept_id = Column(Integer, ForeignKey('iems_department.dept_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True, index=True)
+    faculty_user_id = Column(Integer, ForeignKey('iems_users.id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True, index=True)
+    academic_batch_id = Column(Integer, ForeignKey('iems_academic_batch.academic_batch_id', ondelete='CASCADE', onupdate='CASCADE'), nullable=True, index=True)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(DateTime, default=func.now())
+    modified_date = Column(DateTime, default=func.now(), onupdate=func.now())
+
 

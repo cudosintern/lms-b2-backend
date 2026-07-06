@@ -1,5 +1,5 @@
 from sqlalchemy import text
-from app.core.database import engine
+from .core.database import engine
 
 def init_db():
     print("Re-initializing database tables and mentoring mock data...")

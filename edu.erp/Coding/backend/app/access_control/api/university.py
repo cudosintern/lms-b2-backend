@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 from typing import List
 
-from app.access_control.models.common_models import University
-from app.access_control.schemas.university import (
+from ..models.common_models import University
+from ..schemas.university import (
     UniversityCreate,
     UniversityResponce,
     UniversityUpdate,

@@ -6,7 +6,7 @@ from app.utils.http_return_helper import returnSuccess, returnException
 from app.core.database import get_db
 from pydantic import BaseModel
 from typing import Optional
-from app.api.v1.cudo_module.bloom_level.schema.bloom_level_schema import BloomLevelSchema, BloomLevelDeleteSchema
+from .schema.bloom_level_schema import BloomLevelSchema, BloomLevelDeleteSchema
 
 router = APIRouter()
 

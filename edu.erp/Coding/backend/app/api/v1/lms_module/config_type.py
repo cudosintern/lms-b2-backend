@@ -4,6 +4,19 @@ from sqlalchemy.orm import Session
 from typing import List, Dict, Any
 from io import BytesIO
 from fpdf import FPDF
+from pydantic import BaseModel
+
+class ConfigTypeCreate(BaseModel):
+    name: str
+    status: int = 1
+    min_mentees: int | None = None
+    max_mentees: int | None = None
+
+class ConfigTypeUpdate(BaseModel):
+    name: str | None = None
+    status: int | None = None
+    min_mentees: int | None = None
+    max_mentees: int | None = None
 
 from app.core.database import get_db
 from app.db.models import ConfigType
@@ -27,7 +40,9 @@ def list_config(
             "id": c.id,
             "name": c.name,
             "status": c.status,
-            "created_at": c.created_at
+            "created_at": c.created_at,
+            "min_mentees": c.min_mentees,
+            "max_mentees": c.max_mentees
         })
     return {"status": "success", "data": result}
 
@@ -35,11 +50,11 @@ def list_config(
 # ---------------- ADD ----------------
 @router.post("/")
 def add_config(
-    payload: dict,
+    payload: ConfigTypeCreate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
-    name = payload.get("name")
+    name = payload.name
     if not name or not name.strip():
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -47,7 +62,7 @@ def add_config(
         )
     
     name_clean = name.strip()
-    status_val = payload.get("status", 1)
+    status_val = payload.status
 
     # Check for duplicate
     duplicate = db.query(ConfigType).filter(ConfigType.name == name_clean).first()
@@ -77,7 +92,7 @@ def add_config(
 @router.put("/{id}")
 def update_config(
     id: int,
-    payload: dict,
+    payload: ConfigTypeUpdate,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user)
 ):
@@ -88,7 +103,7 @@ def update_config(
             detail="Config Type not found"
         )
 
-    name = payload.get("name")
+    name = payload.name
     if name is not None:
         name_clean = name.strip()
         if not name_clean:
@@ -109,8 +124,8 @@ def update_config(
             )
         config.name = name_clean
 
-    if "status" in payload:
-        config.status = payload["status"]
+    if payload.status is not None:
+        config.status = payload.status
 
     db.commit()
     db.refresh(config)

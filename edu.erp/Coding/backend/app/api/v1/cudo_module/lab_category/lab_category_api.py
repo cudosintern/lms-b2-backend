@@ -7,11 +7,11 @@ from typing import Optional, List
 from app.core.database import get_db
 from app.utils.auth_helper import get_current_user
 from app.utils.http_return_helper import returnSuccess, returnException
-from .lab_category_model import LabCategory
-from .lab_category_schema import (
+from app.api.v1.cudo_module.lab_category.lab_category_model import LabCategory
+from app.api.v1.cudo_module.lab_category.lab_category_schema import (
     LabCategoryCreate,
     LabCategoryUpdate,
-    LabCategoryResponse
+    LabCategoryResponse,
 )
 
 router = APIRouter()

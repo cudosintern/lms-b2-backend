@@ -2,8 +2,8 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.access_control.schemas.acitivity_log import AcitivityCreate
-from ..models.activity_log import ActivityLog
-from ...core.database import get_db
+from app.access_control.models.activity_log import ActivityLog
+from app.core.database import get_db
 
 router = APIRouter(tags=["Activity Logs"])
 

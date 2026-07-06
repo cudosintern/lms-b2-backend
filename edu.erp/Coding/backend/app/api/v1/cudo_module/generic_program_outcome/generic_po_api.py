@@ -8,7 +8,7 @@ from app.core.database import get_db
 from app.utils.auth_helper import get_current_user
 from app.utils.http_return_helper import returnSuccess, returnException
 from app.db.models import AccreditationType, PO
-from .generic_po_schema import (
+from app.api.v1.cudo_module.generic_program_outcome.generic_po_schema import (
     AccreditationTypeCreate,
     AccreditationTypeUpdate,
     AccreditationTypeResponse,

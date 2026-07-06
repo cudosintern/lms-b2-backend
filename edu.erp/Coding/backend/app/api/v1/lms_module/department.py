@@ -3,7 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.core.database import get_db
 from app.db.models import IEMSDepartment
-from app.api.v1.lms_module.department_schema import DepartmentCreate
+from .department_schema import DepartmentCreate
 from app.utils.auth_helper import get_current_user
 
 router = APIRouter(
