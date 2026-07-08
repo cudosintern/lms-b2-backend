@@ -6850,3 +6850,60 @@ class LMSIssuesObservationsHistory(Base):
     action_type = Column(String(20))
 
     action_timestamp = Column(DateTime)
+
+
+class LMSConfigType(Base):
+    __tablename__ = "lms_config_type"
+
+    config_type_id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    config_type_name = Column(
+        String(100),
+        nullable=False
+    )
+
+    min_mentees = Column(
+        Integer,
+        nullable=False
+    )
+
+    max_mentees = Column(
+        Integer,
+        nullable=False
+    )
+
+    allow_mentee_rating = Column(
+        Boolean,
+        default=False
+    )
+    rating_type_id = Column(
+        Integer,
+        nullable=True
+    )
+
+    created_by = Column(
+        Integer,
+        ForeignKey("iems_users.id"),
+        nullable=False
+    )
+
+    modified_by = Column(
+        Integer,
+        ForeignKey("iems_users.id"),
+        nullable=True
+    )
+
+    created_date = Column(
+        DateTime,
+        default=func.now()
+    )
+
+    modified_date = Column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now()
+    )

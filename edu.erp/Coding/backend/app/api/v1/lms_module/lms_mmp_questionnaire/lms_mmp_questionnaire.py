@@ -13,7 +13,8 @@ from app.utils.http_return_helper import (
 from app.db.models import (
     LMSQuestionnaires,
     LMSQuestionnairesQuestions,
-    LMSQuestionnairesOptions
+    LMSQuestionnairesOptions,
+    LMSQuestionnaireFieldSetting
 )
 
 from .lms_mmp_questionnaire_schema import (
@@ -422,3 +423,4 @@ def delete_option(
     return returnSuccess(
         "Option deleted successfully"
     )
+
