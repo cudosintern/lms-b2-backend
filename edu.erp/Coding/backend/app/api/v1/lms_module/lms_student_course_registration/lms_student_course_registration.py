@@ -1,12 +1,13 @@
 from fastapi import APIRouter, Depends, Header, HTTPException
 from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, validator, root_validator
-from typing import List, Optional, Any
+from typing import List, Optional, Any, Dict
 from datetime import datetime
 import tempfile
 import os
 import io
 import aiomysql
+import traceback
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import A4, letter
@@ -25,25 +26,16 @@ router = APIRouter()
 # Helper Functions
 # ============================================
 
-def is_elective_course(course_type: str) -> bool:
-    """Determine if a course type is elective"""
-    if not course_type:
-        return False
-    elective_keywords = ['Elective', 'elective']
-    return any(keyword in course_type for keyword in elective_keywords)
-
-
-def get_credit_limits(total_credits: float, is_elective: bool = False):
-    """
-    Get min and max credits based on total credits
-    For ALL courses: Max = Total credits
-    For Elective: Min = min(3, total_credits)
-    For Non-Elective: Min = Total credits
-    """
-    if is_elective:
-        return (min(3, total_credits), total_credits)  # Min=3, Max=Total
-    else:
-        return (total_credits, total_credits)  # Min=Max=Total
+def format_time_for_display(time_value):
+    """Format time for display"""
+    if time_value:
+        total_seconds = int(time_value.total_seconds())
+        hours = total_seconds // 3600
+        minutes = (total_seconds % 3600) // 60
+        suffix = "AM" if hours < 12 else "PM"
+        display_hour = hours % 12 or 12
+        return f"{display_hour:02d}:{minutes:02d} {suffix}"
+    return None
 
 
 # ============================================
@@ -95,10 +87,12 @@ class ExportPDFRequest(BaseModel):
 
 class CourseLimitUpdate(BaseModel):
     course_type: str
+    min_credits: Optional[float] = 0
     max_students: Optional[int] = 0
 
 class RegistrationUpdateRequest(BaseModel):
     semester_id: int
+    min_credits: Optional[float] = None
     total_credits: Optional[float] = None
     own_curriculum_electives: Optional[int] = None
     other_curriculum_electives: Optional[int] = None
@@ -108,90 +102,349 @@ class RegistrationUpdateRequest(BaseModel):
     end_time: Optional[str] = None
     course_limits: Optional[List[CourseLimitUpdate]] = []
 
-    @root_validator(skip_on_failure=True)
-    def validate_all(cls, values):
-        """Validate all fields together"""
-        course_limits = values.get('course_limits', [])
-        total_credits = values.get('total_credits')
+
+# ============================================
+# GET REGISTRATION SETUP
+# ============================================
+
+@router.get("/registration-setup/{semester_id}")
+async def get_registration_setup(semester_id: int):
+    """Get complete registration setup data with student counts"""
+    print(f"\n{'='*60}")
+    print(f"🔍 [registration-setup] Called with semester_id: {semester_id}")
+    
+    pool = None
+    try:
+        pool = await get_db_pool()
+        if pool is None:
+            return returnException("Database connection failed")
         
-        if not course_limits:
-            return values
-        
-        for idx, limit in enumerate(course_limits):
-            if not limit.course_type:
-                raise ValueError(f"course_type is required for item {idx}")
-            
-            # Validate max_students is not negative
-            if limit.max_students is not None and limit.max_students < 0:
-                raise ValueError(f"max_students cannot be negative for {limit.course_type}")
-        
-        return values
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                # Get semester data
+                await cursor.execute("""
+                    SELECT 
+                        semester_id,
+                        semester,
+                        academic_batch_id,
+                        enroll_start_date,
+                        enroll_start_time,
+                        enroll_end_date,
+                        enroll_end_time,
+                        sem_min_credits,
+                        sem_max_credits,
+                        own_crclm_elective,
+                        other_crclm_elective
+                    FROM iems_semester
+                    WHERE semester_id = %s
+                """, (semester_id,))
+                
+                semester_data = await cursor.fetchone()
+                if not semester_data:
+                    return returnException(f"Semester with ID {semester_id} not found")
+                
+                academic_batch_id = semester_data['academic_batch_id']
+                semester_num = semester_data['semester']
+                
+                print(f"🔍 academic_batch_id: {academic_batch_id}, semester_num: {semester_num}")
+                
+                # Get course structure with student counts
+                await cursor.execute("""
+                    SELECT 
+                        ct.course_type_desc AS course_type,
+                        lms.crs_type_total AS total_credits,
+                        lms.stud_min_crs_enroll AS min_credits,
+                        lms.stud_max_crs_enroll AS max_credits,
+                        COALESCE((
+                            SELECT COUNT(DISTINCT sc.regno)
+                            FROM iems_student_courses sc
+                            JOIN iems_courses c ON c.crs_code = sc.crs_code
+                            WHERE c.course_type_id = lms.crs_type_id
+                            AND c.semester = %s
+                            AND c.academic_batch_id = %s
+                            AND sc.is_registered = 1
+                            AND c.status = 1
+                        ), 0) AS students_registered
+                    FROM lms_academic_batch_semester_crs_structure lms
+                    LEFT JOIN iems_course_type ct ON ct.course_type_id = lms.crs_type_id
+                    WHERE lms.academic_batch_id = %s 
+                        AND lms.semester_id = %s
+                    ORDER BY ct.course_type_desc
+                """, (semester_num, academic_batch_id, academic_batch_id, semester_id))
+                
+                course_structure = await cursor.fetchall()
+                print(f"🔍 course_structure rows: {len(course_structure)}")
+                
+                # Format response
+                response = {
+                    "semester": {
+                        "start_date": semester_data['enroll_start_date'].strftime("%d-%m-%Y") if semester_data.get('enroll_start_date') else None,
+                        "start_time": format_time_for_display(semester_data.get('enroll_start_time')) if semester_data.get('enroll_start_time') else None,
+                        "end_date": semester_data['enroll_end_date'].strftime("%d-%m-%Y") if semester_data.get('enroll_end_date') else None,
+                        "end_time": format_time_for_display(semester_data.get('enroll_end_time')) if semester_data.get('enroll_end_time') else None,
+                        "min_credit": semester_data.get('sem_min_credits') or 0,
+                        "max_credit": semester_data.get('sem_max_credits') or 0,
+                        "own_elective": semester_data.get('own_crclm_elective') or 0,
+                        "other_elective": semester_data.get('other_crclm_elective') or 0
+                    },
+                    "course_structure": [
+                        {
+                            "course_type": item['course_type'] or f"Type {idx + 1}",
+                            "total_credits": float(item['total_credits']) if item['total_credits'] else 0,
+                            "min_credits": float(item['min_credits']) if item['min_credits'] else 0,
+                            "max_credits": float(item['max_credits']) if item['max_credits'] else 0,
+                            "students_registered": int(item['students_registered']) if item['students_registered'] else 0
+                        }
+                        for idx, item in enumerate(course_structure)
+                    ]
+                }
+                
+                return returnSuccess(response)
+                
+    except Exception as e:
+        print(f"❌ Error in get_registration_setup: {str(e)}")
+        traceback.print_exc()
+        return returnException(str(e))
 
 
 # ============================================
-# UPDATE REGISTRATION SETTINGS ENDPOINT
+# GET CURRICULUMS
+# ============================================
+
+@router.get("/curriculums/{program_id}")
+async def get_curriculums(program_id: int):
+    """Get curriculums for a specific program"""
+    pool = None
+    try:
+        pool = await get_db_pool()
+        if pool is None:
+            return returnException("Database connection failed")
+        
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute("""
+                    SELECT
+                        ab.academic_batch_id AS curriculum_id,
+                        CONCAT(
+                            p.pgm_acronym,
+                            ' in ',
+                            d.dept_name,
+                            ' ',
+                            ab.start_year,
+                            '-',
+                            ab.end_year
+                        ) AS curriculum_name,
+                        ab.pgm_id
+                    FROM iems_academic_batch ab
+                    JOIN iems_program p ON ab.pgm_id = p.pgm_id
+                    JOIN iems_department d ON ab.dept_id = d.dept_id
+                    WHERE ab.pgm_id = %s
+                    ORDER BY ab.academic_batch_id
+                """, (program_id,))
+                
+                data = await cursor.fetchall()
+                return returnSuccess(data, "Curriculums fetched successfully")
+                
+    except Exception as e:
+        print(f"Error in get_curriculums: {str(e)}")
+        return returnException(str(e))
+
+
+# ============================================
+# GET TERMS
+# ============================================
+
+@router.get("/terms/{curriculum_id}")
+async def get_terms(curriculum_id: int):
+    """Get terms for a specific curriculum"""
+    pool = None
+    try:
+        pool = await get_db_pool()
+        if pool is None:
+            return returnException("Database connection failed")
+        
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                await cursor.execute("""
+                    SELECT
+                        semester_id,
+                        CONCAT(semester, ' - Semester') AS term_name
+                    FROM iems_semester
+                    WHERE academic_batch_id = %s
+                    AND status = 1
+                    ORDER BY semester
+                """, (curriculum_id,))
+                data = await cursor.fetchall()
+                return returnSuccess(data, "Terms fetched successfully")
+                
+    except Exception as e:
+        print(f"Error in get_terms: {str(e)}")
+        return returnException(str(e))
+
+
+# ============================================
+# GET COURSE ENROLL DETAILS
+# ============================================
+
+@router.get("/course-enroll-details/{semester_id}/{course_type}")
+async def get_course_enroll_details(semester_id: int, course_type: str):
+    """Get courses for a specific course type with registered students count"""
+    pool = None
+    try:
+        pool = await get_db_pool()
+        if pool is None:
+            return returnException("Database connection failed")
+        
+        async with pool.acquire() as conn:
+            async with conn.cursor(aiomysql.DictCursor) as cursor:
+                # Get semester info
+                await cursor.execute("""
+                    SELECT semester, academic_batch_id
+                    FROM iems_semester
+                    WHERE semester_id = %s
+                """, (semester_id,))
+                
+                semester_info = await cursor.fetchone()
+                if not semester_info:
+                    return returnException("Semester not found")
+                
+                semester_num = semester_info['semester']
+                academic_batch_id = semester_info['academic_batch_id']
+                
+                # Find course type
+                await cursor.execute("""
+                    SELECT course_type_id
+                    FROM iems_course_type
+                    WHERE course_type_desc = %s OR course_type_desc LIKE %s
+                """, (course_type, f"%{course_type}%"))
+                
+                course_type_result = await cursor.fetchone()
+                
+                if not course_type_result:
+                    return returnException(f"Course type '{course_type}' not found")
+                
+                course_type_id = course_type_result['course_type_id']
+                
+                # Get courses with registered count
+                await cursor.execute("""
+                    SELECT
+                        c.crs_id,
+                        c.crs_code,
+                        c.crs_title,
+                        c.total_credits,
+                        COALESCE((
+                            SELECT COUNT(DISTINCT sc.regno)
+                            FROM iems_student_courses sc
+                            WHERE sc.crs_code = c.crs_code
+                            AND sc.is_registered = 1
+                        ), 0) AS registered_count
+                    FROM iems_courses c
+                    WHERE c.academic_batch_id = %s
+                        AND c.semester = %s
+                        AND c.course_type_id = %s
+                        AND c.status = 1
+                    ORDER BY c.crs_code
+                """, (academic_batch_id, semester_num, course_type_id))
+                
+                courses = await cursor.fetchall()
+                return returnSuccess(courses)
+                
+    except Exception as e:
+        print(f"❌ Error in get_course_enroll_details: {str(e)}")
+        traceback.print_exc()
+        return returnException(str(e))
+
+
+# ============================================
+# UPDATE REGISTRATION SETTINGS - COMPLETE FIX
 # ============================================
 
 @router.post("/update-registration-settings")
 async def update_registration_settings(request: RegistrationUpdateRequest):
-    """
-    Update registration settings for a semester
-    """
+    """Update registration settings - COMPLETE FIX with course min_credits"""
+    print(f"\n{'='*80}")
+    print(f"🔍 [UPDATE] Request received")
+    print(f"🔍 [UPDATE] semester_id: {request.semester_id}")
+    print(f"🔍 [UPDATE] min_credits: {request.min_credits}")
+    print(f"🔍 [UPDATE] total_credits: {request.total_credits}")
+    print(f"🔍 [UPDATE] own_curriculum_electives: {request.own_curriculum_electives}")
+    print(f"🔍 [UPDATE] other_curriculum_electives: {request.other_curriculum_electives}")
+    print(f"🔍 [UPDATE] course_limits count: {len(request.course_limits) if request.course_limits else 0}")
+    if request.course_limits:
+        for idx, limit in enumerate(request.course_limits):
+            print(f"   [{idx+1}] {limit.course_type}: min_credits={limit.min_credits}, max_students={limit.max_students}")
+    print(f"{'='*80}")
+    
     pool = None
     conn = None
     
     try:
         pool = await get_db_pool()
         if pool is None:
-            return returnException("Database connection failed", 500)
+            print(f"❌ [UPDATE] Database pool is None")
+            return returnException("Database connection failed")
         
         conn = await pool.acquire()
+        print(f"✅ [UPDATE] Connection acquired")
+        
         async with conn.cursor(aiomysql.DictCursor) as cursor:
+            # Check database
+            await cursor.execute("SELECT DATABASE() as db")
+            db_info = await cursor.fetchone()
+            print(f"🔍 [UPDATE] Connected to database: {db_info}")
             
-            # Get semester info
-            await cursor.execute("""
-                SELECT semester, academic_batch_id
-                FROM iems_semester
-                WHERE semester_id = %s
-            """, (request.semester_id,))
+            # Check if semester exists
+            await cursor.execute("SELECT * FROM iems_semester WHERE semester_id = %s", (request.semester_id,))
+            semester_before = await cursor.fetchone()
+            print(f"🔍 [UPDATE] Semester before update: {semester_before}")
             
-            semester_info = await cursor.fetchone()
-            if not semester_info:
-                return returnException("Semester not found", 404)
+            if not semester_before:
+                print(f"❌ [UPDATE] Semester {request.semester_id} does NOT exist!")
+                return returnException(f"Semester {request.semester_id} not found", 404)
             
-            semester_num = semester_info['semester']
-            
-            # Update semester fields
+            # Build update query for semester
             update_fields = []
             params = []
+            
+            if request.min_credits is not None:
+                update_fields.append("sem_min_credits = %s")
+                params.append(request.min_credits)
+                print(f"   ✅ sem_min_credits = {request.min_credits}")
             
             if request.total_credits is not None:
                 update_fields.append("sem_max_credits = %s")
                 params.append(request.total_credits)
+                print(f"   ✅ sem_max_credits = {request.total_credits}")
                 
             if request.own_curriculum_electives is not None:
                 update_fields.append("own_crclm_elective = %s")
                 params.append(request.own_curriculum_electives)
+                print(f"   ✅ own_crclm_elective = {request.own_curriculum_electives}")
                 
             if request.other_curriculum_electives is not None:
                 update_fields.append("other_crclm_elective = %s")
                 params.append(request.other_curriculum_electives)
+                print(f"   ✅ other_crclm_elective = {request.other_curriculum_electives}")
                 
             if request.start_date:
                 update_fields.append("enroll_start_date = STR_TO_DATE(%s, '%%d-%%m-%%Y')")
                 params.append(request.start_date)
+                print(f"   ✅ enroll_start_date = {request.start_date}")
                 
             if request.start_time:
                 update_fields.append("enroll_start_time = STR_TO_DATE(%s, '%%h:%%i %%p')")
                 params.append(request.start_time)
+                print(f"   ✅ enroll_start_time = {request.start_time}")
                 
             if request.end_date:
                 update_fields.append("enroll_end_date = STR_TO_DATE(%s, '%%d-%%m-%%Y')")
                 params.append(request.end_date)
+                print(f"   ✅ enroll_end_date = {request.end_date}")
                 
             if request.end_time:
                 update_fields.append("enroll_end_time = STR_TO_DATE(%s, '%%h:%%i %%p')")
                 params.append(request.end_time)
+                print(f"   ✅ enroll_end_time = {request.end_time}")
             
             if update_fields:
                 params.append(request.semester_id)
@@ -200,12 +453,26 @@ async def update_registration_settings(request: RegistrationUpdateRequest):
                     SET {', '.join(update_fields)}
                     WHERE semester_id = %s
                 """
+                
+                print(f"\n🔍 [UPDATE] Executing query:")
+                print(f"   Query: {query}")
+                print(f"   Params: {params}")
+                
                 await cursor.execute(query, params)
-                print(f"✅ Updated semester: {', '.join(update_fields)}")
+                rows_affected = cursor.rowcount
+                print(f"\n📊 [UPDATE] Rows affected: {rows_affected}")
+                await conn.commit()
+                print(f"✅ [UPDATE] Transaction committed successfully!")
+            else:
+                print(f"⚠️ [UPDATE] No fields to update!")
             
-            # Update course student limits
+            # Update course limits - FIXED: Update both min_credits and max_students
             if request.course_limits:
-                for limit in request.course_limits:
+                print(f"\n🔍 [UPDATE] Updating {len(request.course_limits)} course limits...")
+                
+                for idx, limit in enumerate(request.course_limits):
+                    print(f"   [{idx+1}] {limit.course_type}: min_credits={limit.min_credits}, max_students={limit.max_students}")
+                    
                     if limit.course_type:
                         # Find course type
                         await cursor.execute("""
@@ -215,131 +482,80 @@ async def update_registration_settings(request: RegistrationUpdateRequest):
                         """, (f"%{limit.course_type}%",))
                         
                         course_type_result = await cursor.fetchone()
+                        
                         if course_type_result:
                             course_type_id = course_type_result['course_type_id']
+                            print(f"      Found course_type_id: {course_type_id}")
                             
-                            # Update courses with new max_students
+                            # UPDATE BOTH min_credits AND max_students
                             update_query = """
-                                UPDATE iems_courses
-                                SET total_stud_enroll = %s
-                                WHERE semester = %s
-                                AND course_type_id = %s
-                                AND status = 1
+                                UPDATE lms_academic_batch_semester_crs_structure
+                                SET stud_min_crs_enroll = %s,
+                                    stud_max_crs_enroll = %s
+                                WHERE academic_batch_id = %s
+                                AND semester_id = %s
+                                AND crs_type_id = %s
                             """
                             await cursor.execute(update_query, (
+                                limit.min_credits or 0,
                                 limit.max_students or 0,
-                                semester_num,
+                                semester_before['academic_batch_id'],
+                                request.semester_id,
                                 course_type_id
                             ))
-                            print(f"✅ Updated {limit.course_type} max students to {limit.max_students}")
+                            print(f"      ✅ Updated {limit.course_type}: min={limit.min_credits}, max_students={limit.max_students}")
+                            await conn.commit()
+                            print(f"      ✅ Transaction committed for {limit.course_type}")
                         else:
-                            print(f"⚠️ Course type not found: {limit.course_type}")
+                            print(f"      ⚠️ Course type not found: {limit.course_type}")
             
-            return returnSuccess(None, "Registration settings updated successfully")
+            # Verify semester update
+            await cursor.execute("SELECT * FROM iems_semester WHERE semester_id = %s", (request.semester_id,))
+            semester_after = await cursor.fetchone()
+            print(f"\n🔍 [UPDATE] Semester after update: {semester_after}")
+            
+            # Verify course structure update
+            await cursor.execute("""
+                SELECT 
+                    ct.course_type_desc,
+                    lms.stud_min_crs_enroll,
+                    lms.stud_max_crs_enroll,
+                    lms.crs_type_total
+                FROM lms_academic_batch_semester_crs_structure lms
+                JOIN iems_course_type ct ON ct.course_type_id = lms.crs_type_id
+                WHERE lms.academic_batch_id = %s
+                AND lms.semester_id = %s
+                ORDER BY ct.course_type_desc
+            """, (semester_before['academic_batch_id'], request.semester_id))
+            
+            course_after = await cursor.fetchall()
+            print(f"🔍 [UPDATE] Course structure after update: {course_after}")
+            print(f"{'='*80}\n")
+            
+            return returnSuccess({
+                "semester": semester_after,
+                "course_structure": course_after
+            }, "Registration settings updated successfully")
             
     except Exception as e:
-        print(f"❌ Error updating registration settings: {str(e)}")
-        import traceback
+        if conn:
+            await conn.rollback()
+        print(f"❌ [UPDATE] Error: {str(e)}")
         traceback.print_exc()
         return returnException(str(e))
     finally:
         if conn:
             await pool.release(conn)
+            print(f"✅ [UPDATE] Connection released")
 
 
 # ============================================
-# GET COURSE TYPE LIMITS - DYNAMIC CALCULATION
-# ============================================
-
-@router.get("/course-type-limits/{semester_id}")
-async def get_course_type_limits(semester_id: int):
-    """
-    Get course type limits with dynamic calculation
-    Max = Total credits (always)
-    Min = Total credits for non-electives, 3 for electives
-    """
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                # Get semester info
-                await cursor.execute("""
-                    SELECT semester
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                semester_info = await cursor.fetchone()
-                if not semester_info:
-                    return returnException("Semester not found", 404)
-                
-                semester_num = semester_info['semester']
-                
-                # Get course type summary with total credits and registered students
-                await cursor.execute("""
-                    SELECT 
-                        ct.course_type_desc,
-                        SUM(c.total_credits) AS total_credits,
-                        COALESCE((
-                            SELECT COUNT(DISTINCT sc.regno)
-                            FROM iems_student_courses sc
-                            JOIN iems_courses c2 ON c2.crs_code = sc.crs_code
-                            WHERE c2.course_type_id = ct.course_type_id
-                            AND c2.semester = %s
-                            AND sc.is_registered = 1
-                            AND c2.status = 1
-                        ), 0) AS students_registered
-                    FROM iems_course_type ct
-                    LEFT JOIN iems_courses c 
-                        ON ct.course_type_id = c.course_type_id 
-                        AND c.semester = %s
-                        AND c.status = 1
-                    WHERE ct.status = 1
-                    GROUP BY ct.course_type_id, ct.course_type_desc
-                    ORDER BY ct.course_type_desc
-                """, (semester_num, semester_num))
-                
-                data = await cursor.fetchall()
-                
-                result = []
-                for item in data:
-                    total_credits = float(item['total_credits']) if item['total_credits'] else 0
-                    course_type = item['course_type_desc']
-                    
-                    # Determine if elective
-                    is_elective = is_elective_course(course_type)
-                    
-                    # Get dynamic limits
-                    min_val, max_val = get_credit_limits(total_credits, is_elective)
-                    
-                    result.append({
-                        'course_type_desc': course_type,
-                        'stud_min_crs_enroll': min_val,
-                        'stud_max_crs_enroll': max_val,  # Always equals total_credits
-                        'students_registered': item['students_registered'] or 0
-                    })
-                
-                return returnSuccess(result)
-                
-    except Exception as e:
-        print(f"Error in get_course_type_limits: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return returnException(str(e))
-
-
-# ============================================
-# PDF EXPORT - Uses the same data
+# PDF EXPORT
 # ============================================
 
 @router.post("/export-pdf")
 async def export_registration_pdf(request: ExportPDFRequest):
-    """
-    Export registration setup as PDF using the provided data
-    """
+    """Export registration setup as PDF"""
     try:
         with tempfile.NamedTemporaryFile(delete=False, suffix=".pdf") as tmp_file:
             temp_path = tmp_file.name
@@ -355,7 +571,7 @@ async def export_registration_pdf(request: ExportPDFRequest):
 
         styles = getSampleStyleSheet()
         
-        # Define styles (keep your existing styles here)
+        # Define styles
         page_number_style = ParagraphStyle(
             'PageNumberStyle',
             parent=styles['Normal'],
@@ -459,13 +675,26 @@ async def export_registration_pdf(request: ExportPDFRequest):
             spaceAfter=2
         )
 
+        course_title_style = ParagraphStyle(
+            'CourseTitleStyle',
+            parent=styles['Normal'],
+            fontSize=8,
+            alignment=TA_LEFT,
+            textColor=colors.HexColor('#000000'),
+            fontName='Helvetica',
+            leading=9
+        )
+
         story = []
         
-        # Header
+        # HEADER
+        institute_name = request.institute_name or "IonIdea Institute of Technology and Management"
+        department_name = request.department or "Department of Computer Science & Engineering"
+        
         header_data = [
             [
-                Paragraph("YOUR LOGO HERE", logo_style),
-                Paragraph("IonIdea Institute of Technology and Management<br/>IonIdea Institute of Technology and Management, Bangalore - Demo site<br/>Department of Computer Science & Engineering", 
+                Paragraph("LOGO", logo_style),
+                Paragraph(f"{institute_name}<br/>{department_name}", 
                          ParagraphStyle(
                              'HeaderTextStyle',
                              parent=styles['Normal'],
@@ -500,7 +729,7 @@ async def export_registration_pdf(request: ExportPDFRequest):
         story.append(Paragraph("Student Course Registration Setup", title_style))
         story.append(Spacer(1, 0.04 * inch))
         
-        # Curriculum & Term Table
+        # CURRICULUM & TERM TABLE
         curriculum_data = [
             [
                 Paragraph(f"<b>Curriculum:</b> {request.curriculum}", td_bold_left_style),
@@ -524,10 +753,11 @@ async def export_registration_pdf(request: ExportPDFRequest):
         story.append(curriculum_table)
         story.append(Spacer(1, 0.08 * inch))
         
+        # SECTION TITLE
         story.append(Paragraph("Students to Course Credits Registration Summary", section_style))
         story.append(Spacer(1, 0.04 * inch))
         
-        # Summary Content Table
+        # SUMMARY CONTENT
         summary_content_data = [
             [
                 Paragraph("Total credits:", td_left_style),
@@ -558,8 +788,7 @@ async def export_registration_pdf(request: ExportPDFRequest):
         story.append(summary_content_table)
         story.append(Spacer(1, 0.06 * inch))
         
-        # Course Credit Summary Table - Use the data from request
-        # Build lookup maps
+        # COURSE CREDIT SUMMARY TABLE
         limits_map = {}
         for item in request.courseTypeLimits:
             limits_map[item.course_type_desc] = {
@@ -584,16 +813,10 @@ async def export_registration_pdf(request: ExportPDFRequest):
             course_type = item.type_of_course
             total_credits = item.total_credits
             
-            # Get limits from the courseTypeLimits data
             limits = limits_map.get(course_type, {'min': 0, 'max': 0})
             
-            # Ensure max equals total credits (display the correct value)
-            # If max doesn't match total, use total (this ensures consistency)
             if limits['max'] != total_credits:
                 limits['max'] = total_credits
-                # If it's non-elective, min should also equal total
-                if not is_elective_course(course_type):
-                    limits['min'] = total_credits
             
             registered = registered_map.get(course_type, 0)
             
@@ -624,7 +847,7 @@ async def export_registration_pdf(request: ExportPDFRequest):
         story.append(summary_table)
         story.append(Spacer(1, 0.12 * inch))
         
-        # Course Details Section
+        # COURSE DETAILS SECTION
         if request.courseDetails:
             for course_type in request.courseDetails:
                 story.append(Paragraph(course_type.type, course_type_style))
@@ -639,7 +862,7 @@ async def export_registration_pdf(request: ExportPDFRequest):
                 
                 for course in course_type.courses:
                     course_data.append([
-                        Paragraph(course.course_title, td_left_style),
+                        Paragraph(course.course_title, course_title_style),
                         Paragraph(str(course.credits), td_center_style),
                         Paragraph(str(course.students_registered), td_center_style)
                     ])
@@ -674,13 +897,12 @@ async def export_registration_pdf(request: ExportPDFRequest):
         
     except Exception as e:
         print(f"Error generating PDF: {str(e)}")
-        import traceback
         traceback.print_exc()
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # ============================================
-# Other endpoints (departments, programs, etc.)
+# OTHER ENDPOINTS
 # ============================================
 
 @router.get("/departments")
@@ -689,7 +911,7 @@ async def get_departments():
     try:
         pool = await get_db_pool()
         if pool is None:
-            return returnException("Database connection failed", 500)
+            return returnException("Database connection failed")
         
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
@@ -704,8 +926,6 @@ async def get_departments():
                 
     except Exception as e:
         print(f"Error in get_departments: {str(e)}")
-        import traceback
-        traceback.print_exc()
         return returnException(str(e))
 
 
@@ -715,7 +935,7 @@ async def get_programs(dept_id: int):
     try:
         pool = await get_db_pool()
         if pool is None:
-            return returnException("Database connection failed", 500)
+            return returnException("Database connection failed")
         
         async with pool.acquire() as conn:
             async with conn.cursor(aiomysql.DictCursor) as cursor:
@@ -730,464 +950,4 @@ async def get_programs(dept_id: int):
                 
     except Exception as e:
         print(f"Error in get_programs: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/curriculums/{program_id}")
-async def get_curriculums(program_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT
-                        academic_batch_id AS curriculum_id,
-                        CONCAT(pgm_acronym, ' ', start_year, '-', end_year) AS curriculum_name
-                    FROM iems_academic_batch ab
-                    JOIN iems_program p ON ab.pgm_id = p.pgm_id
-                    WHERE ab.pgm_id = %s
-                    ORDER BY start_year DESC
-                """, (program_id,))
-                data = await cursor.fetchall()
-                return returnSuccess(data, "Curriculums fetched successfully")
-                
-    except Exception as e:
-        print(f"Error in get_curriculums: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/terms/{curriculum_id}")
-async def get_terms(curriculum_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT
-                        semester_id,
-                        CONCAT(semester, ' - Semester') AS term_name
-                    FROM iems_semester
-                    WHERE status = 1
-                    ORDER BY semester
-                """)
-                data = await cursor.fetchall()
-                return returnSuccess(data, "Terms fetched successfully")
-                
-    except Exception as e:
-        print(f"Error in get_terms: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/course-credit-summary/{semester_id}")
-async def get_course_credit_summary(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT semester 
-                    FROM iems_semester 
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                semester_result = await cursor.fetchone()
-                if not semester_result:
-                    return returnException("Semester not found", 404)
-                semester_num = semester_result['semester']
-                
-                query = """
-                SELECT
-                    CASE
-                        WHEN ct.course_type_desc = 'Core' THEN 'Core'
-                        WHEN ct.course_type_desc LIKE 'Open Elective%%' THEN 'Open Elective'
-                        WHEN ct.course_type_desc LIKE 'Career Elective%%' THEN 'Career Elective'
-                        WHEN ct.course_type_desc LIKE 'Professional Elective%%' THEN 'Professional Elective'
-                        ELSE ct.course_type_desc
-                    END AS type_of_course,
-                    SUM(c.total_credits) AS total_credits
-                FROM iems_courses c
-                JOIN iems_course_type ct ON ct.course_type_id = c.course_type_id
-                WHERE c.semester = %s AND c.status = 1
-                GROUP BY type_of_course
-                ORDER BY type_of_course
-                """
-                await cursor.execute(query, (semester_num,))
-                data = await cursor.fetchall()
-                return returnSuccess(data)
-                
-    except Exception as e:
-        print(f"Error in get_course_credit_summary: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/students-registered/{semester_id}")
-async def get_students_registered(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT semester 
-                    FROM iems_semester 
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                semester_result = await cursor.fetchone()
-                if not semester_result:
-                    return returnException("Semester not found", 404)
-                semester_num = semester_result['semester']
-                
-                query = """
-                SELECT 
-                    ct.course_type_desc,
-                    COUNT(DISTINCT sc.regno) AS students_registered
-                FROM iems_student_courses sc
-                JOIN iems_courses c ON c.crs_code = sc.crs_code
-                JOIN iems_course_type ct ON ct.course_type_id = c.course_type_id
-                WHERE sc.is_registered = 1
-                    AND c.semester = %s
-                    AND c.status = 1
-                GROUP BY ct.course_type_desc
-                """
-                await cursor.execute(query, (semester_num,))
-                data = await cursor.fetchall()
-                return returnSuccess(data)
-                
-    except Exception as e:
-        print(f"Error in get_students_registered: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/course-enroll-details/{semester_id}/{course_type}")
-async def get_course_enroll_details(semester_id: int, course_type: str):
-    """
-    Get courses for a specific course type in a semester
-    """
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT semester, academic_batch_id
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                semester_info = await cursor.fetchone()
-                if not semester_info:
-                    return returnException("Semester not found", 404)
-                
-                semester_num = semester_info['semester']
-                academic_batch_id = semester_info['academic_batch_id']
-                
-                course_type_mapping = {
-                    'Core': 'Core',
-                    'Open Elective': 'Open Elective',
-                    'Career Elective': 'Career Elective',
-                    'Professional Elective': 'Professional Elective',
-                    'Basic': 'Basic',
-                    'Theory Course': 'Theory Course'
-                }
-                
-                search_type = course_type_mapping.get(course_type, course_type)
-                
-                await cursor.execute("""
-                    SELECT course_type_id
-                    FROM iems_course_type
-                    WHERE course_type_desc = %s
-                """, (search_type,))
-                
-                course_type_result = await cursor.fetchone()
-                
-                if not course_type_result:
-                    if 'Open Elective' in course_type:
-                        await cursor.execute("""
-                            SELECT course_type_id
-                            FROM iems_course_type
-                            WHERE course_type_desc = 'Open Elective'
-                        """)
-                        course_type_result = await cursor.fetchone()
-                    elif 'Career Elective' in course_type:
-                        await cursor.execute("""
-                            SELECT course_type_id
-                            FROM iems_course_type
-                            WHERE course_type_desc = 'Career Elective'
-                        """)
-                        course_type_result = await cursor.fetchone()
-                    elif 'Professional Elective' in course_type:
-                        await cursor.execute("""
-                            SELECT course_type_id
-                            FROM iems_course_type
-                            WHERE course_type_desc = 'Professional Elective'
-                        """)
-                        course_type_result = await cursor.fetchone()
-                    elif 'Core' in course_type:
-                        await cursor.execute("""
-                            SELECT course_type_id
-                            FROM iems_course_type
-                            WHERE course_type_desc = 'Core'
-                        """)
-                        course_type_result = await cursor.fetchone()
-                
-                if not course_type_result:
-                    return returnException(f"Course type '{course_type}' not found", 404)
-                
-                course_type_id = course_type_result['course_type_id']
-                
-                await cursor.execute("""
-                    SELECT
-                        c.crs_id,
-                        c.crs_code,
-                        c.crs_title,
-                        c.total_credits,
-                        COALESCE(c.total_stud_enroll, 0) AS total_stud_enroll
-                    FROM iems_courses c
-                    WHERE c.academic_batch_id = %s
-                        AND c.semester = %s
-                        AND c.course_type_id = %s
-                        AND c.status = 1
-                    ORDER BY c.crs_code
-                """, (academic_batch_id, semester_num, course_type_id))
-                
-                courses = await cursor.fetchall()
-                return returnSuccess(courses)
-                
-    except Exception as e:
-        print(f"Error in get_course_enroll_details: {str(e)}")
-        return returnException(str(e))
-
-
-# ============================================
-# DATE/TIME ENDPOINTS
-# ============================================
-
-@router.get("/start-date/{semester_id}")
-async def get_start_date(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT enroll_start_date
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                data = await cursor.fetchone()
-        
-        if data and data["enroll_start_date"]:
-            data = {"start_date": data["enroll_start_date"].strftime("%d-%m-%Y")}
-        return returnSuccess(data)
-        
-    except Exception as e:
-        print(f"Error in get_start_date: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/start-time/{semester_id}")
-async def get_start_time(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT enroll_start_time
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                data = await cursor.fetchone()
-        
-        if data and data["enroll_start_time"]:
-            time_value = data["enroll_start_time"]
-            total_seconds = int(time_value.total_seconds())
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            suffix = "AM" if hours < 12 else "PM"
-            display_hour = hours % 12 or 12
-            data = {"start_time": f"{display_hour:02d}:{minutes:02d} {suffix}"}
-        return returnSuccess(data)
-        
-    except Exception as e:
-        print(f"Error in get_start_time: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/end-date/{semester_id}")
-async def get_end_date(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT enroll_end_date
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                data = await cursor.fetchone()
-        
-        if data and data["enroll_end_date"]:
-            data = {"end_date": data["enroll_end_date"].strftime("%d-%m-%Y")}
-        return returnSuccess(data)
-        
-    except Exception as e:
-        print(f"Error in get_end_date: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/end-time/{semester_id}")
-async def get_end_time(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT enroll_end_time
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                data = await cursor.fetchone()
-        
-        if data and data["enroll_end_time"]:
-            time_value = data["enroll_end_time"]
-            total_seconds = int(time_value.total_seconds())
-            hours = total_seconds // 3600
-            minutes = (total_seconds % 3600) // 60
-            suffix = "AM" if hours < 12 else "PM"
-            display_hour = hours % 12 or 12
-            data = {"end_time": f"{display_hour:02d}:{minutes:02d} {suffix}"}
-        return returnSuccess(data)
-        
-    except Exception as e:
-        print(f"Error in get_end_time: {str(e)}")
-        return returnException(str(e))
-
-
-# ============================================
-# SEMESTER INFO ENDPOINTS
-# ============================================
-
-@router.get("/semester-credits/{semester_id}")
-async def get_semester_credits(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT sem_max_credits
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                data = await cursor.fetchone()
-        return returnSuccess(data)
-        
-    except Exception as e:
-        print(f"Error in get_semester_credits: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/semester-credit-range/{semester_id}")
-async def get_semester_credit_range(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT IFNULL(sem_min_credits, 0) AS min_credits,
-                           IFNULL(sem_max_credits, 0) AS max_credits
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                data = await cursor.fetchone()
-                if not data:
-                    data = {"min_credits": 0, "max_credits": 0}
-                return returnSuccess(data)
-                
-    except Exception as e:
-        print(f"Error in get_semester_credit_range: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/own-curriculum-electives/{semester_id}")
-async def get_own_curriculum_electives(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT IFNULL(own_crclm_elective, 0) AS own_crclm_elective
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                data = await cursor.fetchone()
-        return returnSuccess(data)
-        
-    except Exception as e:
-        print(f"Error in get_own_curriculum_electives: {str(e)}")
-        return returnException(str(e))
-
-
-@router.get("/other-curriculum-electives/{semester_id}")
-async def get_other_curriculum_electives(semester_id: int):
-    pool = None
-    try:
-        pool = await get_db_pool()
-        if pool is None:
-            return returnException("Database connection failed", 500)
-        
-        async with pool.acquire() as conn:
-            async with conn.cursor(aiomysql.DictCursor) as cursor:
-                await cursor.execute("""
-                    SELECT IFNULL(other_crclm_elective, 0) AS other_crclm_elective
-                    FROM iems_semester
-                    WHERE semester_id = %s
-                """, (semester_id,))
-                data = await cursor.fetchone()
-        return returnSuccess(data)
-        
-    except Exception as e:
-        print(f"Error in get_other_curriculum_electives: {str(e)}")
         return returnException(str(e))
