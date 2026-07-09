@@ -15,6 +15,7 @@ from .api.v1.lms_module.mentoring_session import router as mentoring_session_rou
 from .api.v1.lms_module.mentor_list import router as mentor_list_router
 from .api.v1.lms_module.mentor_mentee_details import router as mentor_mentee_details_router
 from .api.v1.lms_module.student_details import router as student_details_router
+from .api.v1.lms_module.mmp_report import router as mmp_report_router
 # Access control routers
 from .access_control.api.activity_log import router as activity_log_router
 from .access_control.api.auth import router as auth_router
@@ -113,6 +114,7 @@ app.include_router(
 
 app.include_router(
     student_details_router,
+    mmp_report_router,
     prefix="/api/v1/student-details",
     tags=["MMP Report"]
 )
