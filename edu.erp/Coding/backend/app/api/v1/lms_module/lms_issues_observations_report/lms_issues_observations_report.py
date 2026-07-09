@@ -215,6 +215,9 @@ def get_issue_observation(
             "mentor_status":
                 report.mentor_status,
 
+            "mentor_agreed_date":
+                report.mentor_agreed_date,
+
             "mentee_status":
                 report.mentee_status,
 
@@ -616,6 +619,8 @@ def mentor_agree(
             )
 
         report.mentor_status = req.mentor_status
+
+        report.mentor_agreed_date = datetime.now()
 
         report.modified_by = current_user["user_id"]
 

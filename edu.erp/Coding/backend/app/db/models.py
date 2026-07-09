@@ -6764,6 +6764,11 @@ class LMSIssuesObservations(Base):
         default=0
     )
 
+    mentor_agreed_date = Column(
+        DateTime,
+        nullable=True
+    )
+
     mentee_status = Column(
         Integer,
         default=0
