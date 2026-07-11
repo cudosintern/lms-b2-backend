@@ -25,7 +25,8 @@ from app.db.models import (
     LMSMentoringSubGrpDate,
     IEMSDepartment,
     LMSCrossDeptUsers,
-    LMSCrossDeptUsersCrclms
+    LMSCrossDeptUsersCrclms,
+    LMSConfigType
 )
 
 from .lms_mentors_group_schema import (
@@ -662,11 +663,27 @@ def get_groups_by_academic_batch(
 ):
     try:
 
-        groups = db.query(
-            LMSMentorsGroup
-        ).filter(
-            LMSMentorsGroup.academic_batch_id == academic_batch_id
-        ).all()
+        # groups = db.query(
+        #     LMSMentorsGroup
+        # ).filter(
+        #     LMSMentorsGroup.academic_batch_id == academic_batch_id
+        # ).all()
+
+        groups = (
+            db.query(
+                LMSMentorsGroup,
+                LMSConfigType
+            )
+            .outerjoin(
+                LMSConfigType,
+                LMSConfigType.config_type_id ==
+                LMSMentorsGroup.config_type_id
+            )
+            .filter(
+                LMSMentorsGroup.academic_batch_id == academic_batch_id
+            )
+            .all()
+        )
 
         if not groups:
             return returnException(
@@ -675,7 +692,7 @@ def get_groups_by_academic_batch(
 
         result = []
 
-        for group in groups:
+        for group, config in groups:
 
             # Get all terms of this group
             terms = db.query(
@@ -696,7 +713,13 @@ def get_groups_by_academic_batch(
                     "mentors_group_id": group.mentors_group_id,
                     "academic_batch_id": group.academic_batch_id,
                     "mentors_pgm_title": group.mentors_pgm_title,
-                    "config_type_id": group.config_type_id,
+                    "config_type": {
+                        "config_type_id": config.config_type_id if config else None,
+                        "config_type_name": config.config_type_name if config else None,
+                        "min_mentees": config.min_mentees if config else None,
+                        "max_mentees": config.max_mentees if config else None,
+                        "allow_mentee_rating": config.allow_mentee_rating if config else None
+                    },
                     "questionnaire_id": group.questionnaire_id,
                     "mentors": []
                 })
@@ -1221,6 +1244,36 @@ def get_all_mentees(
                 "usn": student.usno,
                 "name": student.name,
                 "email": student.email
+            })
+
+        return returnSuccess(result)
+
+    except Exception as e:
+        return returnException(str(e))
+    
+@router.get("/get_config_types")
+def get_config_types(
+    db: Session = Depends(get_db)
+):
+    try:
+
+        config_types = (
+            db.query(LMSConfigType)
+            .order_by(LMSConfigType.config_type_name)
+            .all()
+        )
+
+        result = []
+
+        for config in config_types:
+
+            result.append({
+                "config_type_id": config.config_type_id,
+                "config_type_name": config.config_type_name,
+                "min_mentees": config.min_mentees,
+                "max_mentees": config.max_mentees,
+                "allow_mentee_rating": bool(config.allow_mentee_rating),
+                "rating_type_id": config.rating_type_id
             })
 
         return returnSuccess(result)
