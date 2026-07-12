@@ -70,252 +70,45 @@ def get_crclm_term(
             IEMSemester.semester.asc()
         ).all()
 
-        semester_map = {}
+        terms = []
+        seen_term_ids = set()
 
-        for semester in semesters:
+        for row in semesters:
 
-            semester_key = semester.semester
-
-            if semester_key is None:
+            if row.semester_id in seen_term_ids:
                 continue
 
-            semester_map[semester_key] = {
+            seen_term_ids.add(
+                row.semester_id
+            )
+
+            terms.append({
                 "term_id":
-                    semester.semester_id,
+                    row.semester_id,
 
                 "term_name":
-                    semester.term_name
-                    or semester.semester_desc
-                    or f"Semester {semester_key}",
+                    row.semester_desc
+                    or row.term_name
+                    or f"Semester {row.semester}"
+            })
 
-                "sort_order":
-                    semester.semester
-            }
-
-        legacy_curriculums = db.query(
-            IEMSCurriculum
-        ).filter(
-            or_(
-                and_(
-                    IEMSCurriculum.pgm_id ==
-                    academic_batch.pgm_id,
-
-                    IEMSCurriculum.dept_id ==
-                    academic_batch.dept_id,
-
-                    IEMSCurriculum.start_year ==
-                    academic_batch.start_year
-                ),
-                IEMSCurriculum.crclm_id ==
-                academic_batch.import_ref_crclm_id
-                if academic_batch.import_ref_crclm_id
-                else False
-            )
-        ).all()
-
-        legacy_curriculum_ids = []
-
-        for legacy_curriculum in legacy_curriculums:
-
-            if legacy_curriculum.crclm_id not in legacy_curriculum_ids:
-
-                legacy_curriculum_ids.append(
-                    legacy_curriculum.crclm_id
-                )
-
-        if academic_batch.import_ref_crclm_id and (
-            academic_batch.import_ref_crclm_id
-            not in legacy_curriculum_ids
-        ):
-
-            legacy_curriculum_ids.append(
-                academic_batch.import_ref_crclm_id
-            )
-
-        curriculum_query = db.query(
-            Curriculum
-        ).filter(
-            Curriculum.status == 1
-        )
-
-        if legacy_curriculum_ids:
-
-            curriculum_query = curriculum_query.filter(
-                or_(
-                    Curriculum.import_ref_crclm_id.in_(
-                        legacy_curriculum_ids
-                    ),
-                    Curriculum.crclm_id.in_(
-                        legacy_curriculum_ids
-                    )
-                )
-            )
-
-        else:
-
-            curriculum_query = curriculum_query.filter(
-                Curriculum.pgm_id ==
-                academic_batch.pgm_id,
-
-                Curriculum.start_year ==
-                academic_batch.start_year
-            )
-
-        curriculums = curriculum_query.order_by(
-            Curriculum.crclm_name.asc()
-        ).all()
-
-        if not curriculums:
+        if not terms:
 
             return returnSuccess(
                 [],
-                "No curriculum-term mapping found for the selected academic batch."
+                "No term mapping found for the selected academic batch."
             )
 
-        resolved_legacy_ids = []
+        result = [{
+            "academic_batch_id":
+                academic_batch.academic_batch_id,
 
-        for curriculum in curriculums:
+            "curriculum_name":
+                academic_batch.academic_batch_desc,
 
-            if curriculum.import_ref_crclm_id and (
-                curriculum.import_ref_crclm_id
-                not in resolved_legacy_ids
-            ):
-
-                resolved_legacy_ids.append(
-                    curriculum.import_ref_crclm_id
-                )
-
-            elif curriculum.crclm_id not in resolved_legacy_ids:
-
-                resolved_legacy_ids.append(
-                    curriculum.crclm_id
-                )
-
-        term_rows = []
-
-        if resolved_legacy_ids:
-
-            term_rows = db.query(
-                IEMSCrclmTerm
-            ).filter(
-                IEMSCrclmTerm.crclm_id.in_(
-                    resolved_legacy_ids
-                )
-            ).order_by(
-                IEMSCrclmTerm.term_name.asc(),
-                IEMSCrclmTerm.crclm_term_id.asc()
-            ).all()
-
-        terms_by_curriculum = {}
-
-        for term_row in term_rows:
-
-            curriculum_key = term_row.crclm_id
-
-            if curriculum_key not in terms_by_curriculum:
-
-                terms_by_curriculum[curriculum_key] = []
-
-            term_display = semester_map.get(
-                term_row.term_name
-            )
-
-            if term_display:
-
-                term_id = term_display["term_id"]
-                term_name = term_display["term_name"]
-                sort_order = term_display["sort_order"]
-
-            else:
-
-                term_id = term_row.crclm_term_id
-                term_name = str(term_row.term_name)
-                sort_order = term_row.term_name
-
-            duplicate_term = next(
-                (
-                    item for item in
-                    terms_by_curriculum[curriculum_key]
-                    if item["term_id"] == term_id
-                ),
-                None
-            )
-
-            if duplicate_term:
-                continue
-
-            terms_by_curriculum[curriculum_key].append({
-                "term_id":
-                    term_id,
-
-                "term_name":
-                    term_name,
-
-                "sort_order":
-                    sort_order
-            })
-
-        result = []
-        seen_curriculum_ids = set()
-
-        for curriculum in curriculums:
-
-            if curriculum.crclm_id in seen_curriculum_ids:
-                continue
-
-            seen_curriculum_ids.add(
-                curriculum.crclm_id
-            )
-
-            legacy_curriculum_id = (
-                curriculum.import_ref_crclm_id
-                if curriculum.import_ref_crclm_id
-                else curriculum.crclm_id
-            )
-
-            terms = terms_by_curriculum.get(
-                legacy_curriculum_id,
-                []
-            )
-
-            ordered_terms = sorted(
-                terms,
-                key=lambda item: (
-                    item["sort_order"]
-                    if item["sort_order"] is not None
-                    else 9999,
-                    item["term_id"]
-                )
-            )
-
-            result.append({
-                "academic_batch_id":
-                    academic_batch_id,
-
-                "curriculum_id":
-                    curriculum.crclm_id,
-
-                "curriculum_name":
-                    curriculum.crclm_name,
-
-                "terms": [
-                    {
-                        "term_id":
-                            term["term_id"],
-
-                        "term_name":
-                            term["term_name"]
-                    }
-                    for term in ordered_terms
-                ]
-            })
-
-        if not result:
-
-            return returnSuccess(
-                [],
-                "No curriculum-term mapping found for the selected academic batch."
-            )
+            "terms":
+                terms
+        }]
 
         return returnSuccess(result)
 
