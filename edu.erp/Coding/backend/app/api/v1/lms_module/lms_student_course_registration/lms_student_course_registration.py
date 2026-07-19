@@ -993,14 +993,14 @@ async def export_registration_pdf(request: ExportPDFRequest):
                     alignment=TA_RIGHT
                 )
                 
-                # Powered by style
-                powered_by_style = ParagraphStyle(
-                    "Powered",
-                    fontName="Helvetica",
-                    fontSize=8,
-                    textColor=colors.grey,
-                    leading=8
-                )
+                # Powered by style - REMOVED
+                # powered_by_style = ParagraphStyle(
+                #     "Powered",
+                #     fontName="Helvetica",
+                #     fontSize=8,
+                #     textColor=colors.grey,
+                #     leading=8
+                # )
                 
                 # Title style - Dark Red, Bold
                 title_style = ParagraphStyle(
@@ -1098,14 +1098,53 @@ async def export_registration_pdf(request: ExportPDFRequest):
                 story = []
                 
                 # ============================================
-                # HEADER - FULLY DYNAMIC
+                # HEADER - FULLY DYNAMIC WITH LOGO AND DASHED BORDER
                 # ============================================
                 # Get values from request with fallbacks
                 institute_name = request.institute_name or "IonIdea Institute of Technology and Management"
                 department_name = request.department or "Department of Computer Science & Engineering"
                 
-                # Logo text
-                logo = Paragraph("", logo_style)
+                # Logo with dashed border using a drawing
+                from reportlab.graphics.shapes import Drawing, Rect, String
+                from reportlab.graphics import renderPDF
+                
+                # Create a drawing with dashed border
+                logo_drawing = Drawing(38, 38)
+                
+                # Dashed border rectangle - BLACK color, thicker line
+                rect = Rect(0, 0, 38, 38)
+                rect.strokeColor = colors.black
+                rect.strokeWidth = 1.5
+                rect.fillColor = None
+                rect.strokeDashArray = [2, 2]
+                logo_drawing.add(rect)
+                
+                # Add text inside - "YOUR" in BLACK, "LOGO" in YELLOW, "HERE" in BLACK
+                # All caps, bigger font to fill the box
+                
+                # "YOUR" - BLACK
+                text1 = String(19, 30, "YOUR")
+                text1.fontName = 'Helvetica-Bold'
+                text1.fontSize = 8
+                text1.fillColor = colors.black
+                text1.textAnchor = 'middle'
+                logo_drawing.add(text1)
+                
+                # "LOGO" - YELLOW
+                text2 = String(19, 20, "LOGO")
+                text2.fontName = 'Helvetica-Bold'
+                text2.fontSize = 9
+                text2.fillColor = colors.yellow
+                text2.textAnchor = 'middle'
+                logo_drawing.add(text2)
+                
+                # "HERE" - BLACK
+                text3 = String(19, 10, "HERE")
+                text3.fontName = 'Helvetica-Bold'
+                text3.fontSize = 8
+                text3.fillColor = colors.black
+                text3.textAnchor = 'middle'
+                logo_drawing.add(text3)
                 
                 # Header text with dynamic institute, address, department
                 header_text = Paragraph(
@@ -1119,10 +1158,10 @@ async def export_registration_pdf(request: ExportPDFRequest):
                 # Page number
                 page_no = Paragraph("<b>1</b>", page_no_style)
                 
-                # Header table
+                # Header table with bordered logo
                 header = Table(
-                    [[logo, header_text, page_no]],
-                    colWidths=[2.0*cm, 14.5*cm, 1.0*cm]
+                    [[logo_drawing, header_text, page_no]],
+                    colWidths=[1.8*cm, 14.0*cm, 1.0*cm]
                 )
                 
                 header.setStyle(TableStyle([
@@ -1139,15 +1178,16 @@ async def export_registration_pdf(request: ExportPDFRequest):
                 story.append(header)
                 story.append(Spacer(1, 2))
                 
-                # Powered by
-                story.append(
-                    Paragraph(
-                        "Powered by www.ioncudos.com",
-                        powered_by_style
-                    )
-                )
+                # Powered by - REMOVED
+                # story.append(
+                #     Paragraph(
+                #         "Powered by www.ioncudos.com",
+                #         powered_by_style
+                #     )
+                # )
                 
-                story.append(Spacer(1, 6))
+                # story.append(Spacer(1, 6))  # This spacer is also removed since powered by is gone
+                story.append(Spacer(1, 6))  # Keep this spacer for spacing after header
                 
                 # Title
                 story.append(
