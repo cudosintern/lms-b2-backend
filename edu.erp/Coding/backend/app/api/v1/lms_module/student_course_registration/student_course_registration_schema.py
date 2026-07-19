@@ -20,3 +20,39 @@ class RegistrationStatusResponse(BaseModel):
     semester_id: int
     registration_start: Optional[str] = None
     registration_end: Optional[str] = None
+
+class AvailableCourseRequest(BaseModel):
+    academic_batch_id: int
+    semester_id: int
+    section_id: int
+
+    parent_academic_batch_id: int
+    parent_semester_id: int
+
+    student_id: int
+
+class CourseRegistrationRequest(BaseModel):
+    academic_batch_id: int
+    semester_id: int
+    section_id: int
+
+    parent_academic_batch_id: int
+    parent_semester_id: int
+
+    student_id: int
+
+    open_elective_flag: int = 0
+
+class SectionListRequest(BaseModel):
+    academic_batch_id: int
+    semester_id: int
+
+
+class SectionResponse(BaseModel):
+    section_id: int
+    section_name: str
+
+class RegisteredCourseRequest(BaseModel):
+    parent_academic_batch_id: int
+    parent_semester_id: int
+    student_id: int
