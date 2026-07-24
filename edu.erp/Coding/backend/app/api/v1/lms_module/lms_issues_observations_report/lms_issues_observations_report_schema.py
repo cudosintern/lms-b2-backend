@@ -77,6 +77,8 @@ class MentorStatusUpdate(BaseModel):
 
     mentor_status: int
 
+    mentor_agreed_date: Optional[datetime] = None
+
 
 # ==========================================================
 # MENTEE STATUS
