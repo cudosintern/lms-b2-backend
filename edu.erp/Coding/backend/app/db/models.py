@@ -7079,10 +7079,16 @@ class LMSConfigType(Base):
         onupdate=func.now()
     )
 
-<<<<<<< HEAD
     org_id = Column(
         Integer,
-=======
+        nullable=True
+    )
+
+    status = Column(
+        Integer,
+        default=1
+    )
+
 class CudosCrclmComponent(Base):
     __tablename__ = "cudos_crclm_component"
 
@@ -7227,17 +7233,14 @@ class CudosMapCoursetoStudent(Base):
     std_semester_id = Column(
         Integer,
         ForeignKey("iems_semester.semester_id"),
->>>>>>> 31833b561b1865a1bf6d4229e7813fe71812d61a
         nullable=True
     )
 
     status = Column(
         Integer,
-<<<<<<< HEAD
-        default=1
-=======
         ForeignKey("cudos_master_type_details.mt_details_id"),
-        nullable=True
+        nullable=True,
+        default=1
     )
 
     created_by = Column(
@@ -7292,5 +7295,4 @@ class CudosMapCoursetoStudent(Base):
     modified_user = relationship(
         "IEMSUsers",
         foreign_keys=[modified_by]
->>>>>>> 31833b561b1865a1bf6d4229e7813fe71812d61a
     )
