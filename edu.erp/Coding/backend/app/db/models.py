@@ -4275,8 +4275,23 @@ class ErpDepartment(Base):
     __tablename__ = 'erp_department'
 
     erp_dept_id = Column(Integer, primary_key=True, index=True)
-    erp_dept_name = Column(String)
-    # Add other columns as per your model
+    erp_dept_unqkey = Column(String(80), nullable=True)
+    erp_inst_id = Column(Integer, nullable=True)
+    erp_school_id = Column(Integer, nullable=True)
+    erp_dept_name = Column(String(100), nullable=True)
+    erp_dept_acronym = Column(String(20), nullable=True)
+    erp_dept_start_year = Column(Integer, nullable=True)
+    erp_dept_pgm_exists = Column(Integer, default=0)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    create_date = Column(TIMESTAMP, server_default=func.current_timestamp())
+    created_date = synonym("create_date")
+    modify_date = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    modified_date = synonym("modify_date")
+    erp_dept_hod_id = Column(Integer, nullable=True)
+    status = Column(Integer, default=1)
+    adm_dept_id = Column(Integer, nullable=True)
+    sync_from = Column(Integer, nullable=True)
 
 
 class ErpCurriculum(Base):
@@ -4292,10 +4307,12 @@ class ErpCurriculum(Base):
     erp_dept_id = Column(Integer, nullable=True)
     erp_school_id = Column(Integer, nullable=True)
     erp_inst_id = Column(Integer, nullable=True)
-    create_date = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    create_date = Column(TIMESTAMP, server_default=func.current_timestamp())
+    created_date = synonym("create_date")
     created_by = Column(Integer, nullable=True)
     modified_by = Column(Integer, nullable=True)
-    modified_date = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    modify_date = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
+    modified_date = synonym("modify_date")
     status = Column(Integer, default=1)
 
 
@@ -6678,6 +6695,70 @@ class LMSMMPSessionSuggestionIndividualComments(Base):
         back_populates="individual_comments"
     )
 
+class LMSCrossDeptMentor(Base):
+    __tablename__ = "lms_cross_dept_mentor"
+
+    id = Column(
+        Integer,
+        primary_key=True,
+        autoincrement=True
+    )
+
+    mentor_user_id = Column(
+        Integer,
+        ForeignKey("iems_users.id"),
+        nullable=False
+    )
+
+    mentor_dept_id = Column(
+        Integer,
+        ForeignKey("iems_department.dept_id"),
+        nullable=False
+    )
+
+    assigned_dept_id = Column(
+        Integer,
+        ForeignKey("iems_department.dept_id"),
+        nullable=False
+    )
+
+    curriculum_id = Column(
+        Integer,
+        ForeignKey("erp_curriculum.erp_crclm_id"),
+        nullable=True
+    )
+
+    org_id = Column(
+        Integer,
+        nullable=True
+    )
+
+    status = Column(
+        Integer,
+        default=1
+    )
+
+    created_by = Column(
+        Integer,
+        nullable=True
+    )
+
+    modified_by = Column(
+        Integer,
+        nullable=True
+    )
+
+    create_date = Column(
+        DateTime,
+        default=func.now()
+    )
+
+    modify_date = Column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now()
+    )
+
 class LMSCrossDeptUsers(Base):
     __tablename__ = "lms_cross_dept_users"
 
@@ -6948,11 +7029,13 @@ class LMSConfigType(Base):
         primary_key=True,
         autoincrement=True
     )
+    id = synonym("config_type_id")
 
-    config_type_name = Column(
-        String(100),
+    config_type = Column(
+        String(255),
         nullable=False
     )
+    config_type_name = synonym("config_type")
 
     min_mentees = Column(
         Integer,
@@ -6985,15 +7068,25 @@ class LMSConfigType(Base):
         nullable=True
     )
 
-    created_date = Column(
+    create_date = Column(
         DateTime,
         default=func.now()
     )
 
-    modified_date = Column(
+    modify_date = Column(
         DateTime,
         default=func.now(),
         onupdate=func.now()
+    )
+
+    org_id = Column(
+        Integer,
+        nullable=True
+    )
+
+    status = Column(
+        Integer,
+        default=1
     )
 
 class CudosCrclmComponent(Base):
@@ -7146,7 +7239,8 @@ class CudosMapCoursetoStudent(Base):
     status = Column(
         Integer,
         ForeignKey("cudos_master_type_details.mt_details_id"),
-        nullable=True
+        nullable=True,
+        default=1
     )
 
     created_by = Column(
