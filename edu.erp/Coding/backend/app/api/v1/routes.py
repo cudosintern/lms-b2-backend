@@ -77,6 +77,11 @@ from app.api.v1.lms_module.lms_mmp_report.mmp_report import router as mmp_report
 
 from app.api.v1.lms_module.student_course_registration.student_course_registration import router as student_course_registration_router
 
+from app.api.v1.lms_module.config_type import router as config_type_router 
+from app.api.v1.lms_module.cross_department_mentor import router as cross_department_mentor_router
+from app.api.v1.lms_module.mentor_list import router as mentor_list_router
+from app.api.v1.lms_module.mentoring import router as mentoring_router
+from app.api.v1.lms_module.student_details import router as student_details_router
 
 router = APIRouter()
 
@@ -102,6 +107,11 @@ router.include_router(
 router.include_router(
     department.router, prefix="/department", tags=["EMS-configuration"]
 )
+
+router.include_router(config_type_router, prefix="/config-type", tags=["LMS-Config Type"])
+router.include_router(cross_department_mentor_router, prefix="/cross-dept-mentor", tags=["LMS-Cross Department Mentor"])
+router.include_router(mentor_list_router, prefix="/mentoring", tags=["LMS-Mentor List"])
+router.include_router(mentoring_router, prefix="/mentoring", tags=["LMS-Mentoring"])
 
 # router.include_router(program.router, prefix="/program", tags=["EMS-configuration"])
 # router.include_router(
@@ -580,4 +590,10 @@ router.include_router(
     mmp_report_router,
     prefix="/mmp-report",
     tags=["MMP Report"]
+)
+
+router.include_router(
+    student_details_router,
+    prefix="/api/v1/student-details",
+    tags=["Student Details"]
 )

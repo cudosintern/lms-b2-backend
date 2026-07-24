@@ -206,6 +206,7 @@ def get_groups_by_academic_batch(
             result.append({
                 "mentors_group_id": grp.mentors_group_id,
                 "group_name": grp.mentors_pgm_title,
+                "mentors_pgm_title": grp.mentors_pgm_title,
                 "questionnaire_id": grp.questionnaire_id
             })
 
@@ -255,10 +256,62 @@ def get_group_mentees(
             result.append({
                 "student_id": student.student_id,
                 "usn": student.usno,
+                "student_usn": student.usno,
                 "student_name": student.name,
                 "email": student.email,
+                "student_email": student.email,
                 "mobile": student.mobile
             })
+
+        return returnSuccess(result)
+
+    except Exception as e:
+        return returnException(str(e))
+
+
+@router.get("/get_group_mentees/{mentors_group_id}")
+def get_group_mentees_without_semester(
+    mentors_group_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        terms = db.query(
+            LMSMentorsGroupTerms
+        ).filter(
+            LMSMentorsGroupTerms.mentors_group_id == mentors_group_id
+        ).all()
+
+        if not terms:
+            return returnSuccess([])
+
+        term_ids = [t.mentors_group_terms_id for t in terms]
+
+        mentees = db.query(
+            LMSGroupMentees,
+            IEMStudents
+        ).join(
+            IEMStudents,
+            IEMStudents.student_id ==
+            LMSGroupMentees.student_id
+        ).filter(
+            LMSGroupMentees.mentors_group_terms_id.in_(term_ids)
+        ).all()
+
+        result = []
+        seen_student_ids = set()
+
+        for mentee, student in mentees:
+            if student.student_id not in seen_student_ids:
+                seen_student_ids.add(student.student_id)
+                result.append({
+                    "student_id": student.student_id,
+                    "usn": student.usno,
+                    "student_usn": student.usno,
+                    "student_name": student.name,
+                    "email": student.email,
+                    "student_email": student.email,
+                    "mobile": student.mobile
+                })
 
         return returnSuccess(result)
 
@@ -484,20 +537,20 @@ def save_mentoring_session(
     
 @router.get("/get_mentoring_sessions")
 def get_mentoring_sessions(
-    academic_batch_id: int,
-    month: int,
-    year: int,
+    academic_batch_id: Optional[int] = None,
+    month: Optional[int] = None,
+    year: Optional[int] = None,
     db: Session = Depends(get_db)
 ):
 
     result = []
 
-    groups = db.query(
-        LMSMentorsGroup
-    ).filter(
-        LMSMentorsGroup.academic_batch_id ==
-        academic_batch_id
-    ).all()
+    groups_query = db.query(LMSMentorsGroup)
+    if academic_batch_id is not None:
+        groups_query = groups_query.filter(
+            LMSMentorsGroup.academic_batch_id == academic_batch_id
+        )
+    groups = groups_query.all()
 
     for group in groups:
 
@@ -543,11 +596,7 @@ def get_mentoring_sessions(
 
                     for dt in dates:
 
-                        if (
-                            dt.start_date.month == month
-                            and
-                            dt.start_date.year == year
-                        ):
+                        if (month is None or dt.start_date.month == month) and (year is None or dt.start_date.year == year):
 
                             include_schedule = True
 
@@ -582,8 +631,8 @@ def get_mentoring_sessions(
                                 mentee_count
                             })
 
-                    if date_list:
-
+                    if date_list or (month is None and year is None):
+                        include_schedule = True
                         subgroup_list.append({
 
                             "sub_group_id":
@@ -599,7 +648,7 @@ def get_mentoring_sessions(
                             date_list
                         })
 
-                if include_schedule:
+                if include_schedule or (month is None and year is None):
 
                     result.append({
 
