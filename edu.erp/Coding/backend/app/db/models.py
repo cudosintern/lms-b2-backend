@@ -924,114 +924,30 @@ class IEMSCourseMappingTable(Base):
     modified_at = Column(DateTime, nullable=True)
 
 
-# class IEMSCourseType(Base):
-#     __tablename__ = "iems_course_type"
-
-#     course_type_id = Column(Integer, primary_key=True, autoincrement=True)
-
-#     core_crs_flag = Column(Boolean, default=False)
-#     elective_crs_flag = Column(Boolean, default=False)
-
-#     crclm_component_id = Column(
-#         Integer,
-#         ForeignKey("cudos_crclm_component.cc_id"),
-#         nullable=True
-#     )
-
-#     course_type_code = Column(String(45), nullable=True)
-#     course_type_desc = Column(String(100), nullable=True)
-#     course_type_description = Column(Text, nullable=True)
-
-#     crs_type_cie = Column(Integer, nullable=True)
-#     crs_type_see = Column(Integer, nullable=True)
-#     crs_import_flag = Column(Boolean, default=True)
-#     crs_type_cieoccassions = Column(Integer, nullable=True)
-
-#     cia_max_marks = Column(Float, default=0)
-#     cia_min_marks = Column(Float, default=0)
-#     see_max_marks = Column(Float, default=0)
-#     see_min_marks = Column(Float, default=0)
-
-#     total_classes = Column(Float, default=0)
-#     total_classes_fastrack = Column(Integer, default=0)
-#     min_passing_marks = Column(Float, default=0)
-
-#     org_id = Column(Integer, nullable=True)
-#     status = Column(Integer, default=1)
-
-#     created_by = Column(Integer, ForeignKey("iems_users.id"))
-#     modified_by = Column(Integer, ForeignKey("iems_users.id"))
-
-#     create_date = Column(Date)
-#     modify_date = Column(Date)
-
-#     cia_weightage = Column(Integer, default=0)
-#     see_weightage = Column(Integer, default=0)
-
-#     viva_min_marks = Column(Float, default=0)
-#     viva_max_marks = Column(Float, default=0)
-#     viva_weightage = Column(Integer, default=0)
-
-#     # Relationships
-#     curriculum_component = relationship(
-#         "CudosCrclmComponent",
-#         back_populates="course_types"
-#     )
-
-
 class IEMSCourseType(Base):
-    __tablename__ = "iems_course_type"
+    __tablename__ = 'iems_course_type'
 
-    course_type_id = Column(Integer, primary_key=True, autoincrement=True)
-
-    core_crs_flag = Column(Boolean, default=False)
-    elective_crs_flag = Column(Boolean, default=False)
-
-    crclm_component_id = Column(
-        Integer,
-        ForeignKey("cudos_crclm_component.cc_id"),
-        nullable=True
-    )
-
+    course_type_id = Column(Integer, primary_key=True, autoincrement=True)  # UNSIGNED
     course_type_code = Column(String(45), nullable=False)
     course_type_desc = Column(String(45), nullable=False)
-
     cia_max_marks = Column(Float, default=0)
     cia_min_marks = Column(Float, default=0)
     see_max_marks = Column(Float, default=0)
     see_min_marks = Column(Float, default=0)
-
     total_classes = Column(Float, nullable=False)
-    total_classes_fastrack = Column(Integer, nullable=False)
-
+    total_classes_fastrack = Column(Integer, nullable=False)  # UNSIGNED
     min_passing_marks = Column(Float, nullable=False)
-
-    org_id = Column(Integer)
-    status = Column(Integer)
-
-    created_by = Column(Integer)
-    modified_by = Column(Integer)
-
-    create_date = Column(DateTime)
-    modify_date = Column(DateTime)
-
-    cia_weightage = Column(Integer, default=0)
-    see_weightage = Column(Integer, default=0)
-
+    org_id = Column(Integer, nullable=True)  # UNSIGNED
+    status = Column(Integer, nullable=False)  # mediumint(8) UNSIGNED
+    created_by = Column(Integer, nullable=False)  # mediumint(8) UNSIGNED
+    modified_by = Column(Integer, nullable=False)  # mediumint(8) UNSIGNED
+    create_date = Column(Integer, nullable=False)  # mediumint(8) UNSIGNED
+    modify_date = Column(Integer, nullable=False)  # mediumint(8) UNSIGNED
+    cia_weightage = Column(Integer, nullable=False, default=0)  # tinyint(3) UNSIGNED
+    see_weightage = Column(Integer, nullable=False, default=0)  # tinyint(3) UNSIGNED
     viva_min_marks = Column(Float, default=0)
     viva_max_marks = Column(Float, default=0)
-    viva_weightage = Column(Integer, default=0)
-
-    # Missing fields
-    crs_type_cie = Column(Integer)
-    crs_type_see = Column(Integer)
-    crs_import_flag = Column(Boolean, default=True)
-    crs_type_cieoccassions = Column(Integer)
-
-    crclm_component = relationship(
-        "CudosCrclmComponent",
-        back_populates="course_types"
-    )
+    viva_weightage = Column(Integer, default=0)  # tinyint(3) UNSIGNED
 
 
 class IEMSCrclmTerm(Base):
@@ -2591,14 +2507,10 @@ class IEMSemester(Base):
     total_practical_courses = Column(Integer, nullable=True)
     academic_start_year = Column(Integer, nullable=True)
     academic_end_year = Column(Integer, nullable=True)
-    enroll_start_date = Column(Date, nullable=True)
-    enroll_start_time = Column(Time, nullable=False)
-    enroll_end_date = Column(Date, nullable=True)    
-    enroll_end_time = Column(Time, nullable=False)
-    # enroll_start_date = Column(DateTime, nullable=True)
-    # enroll_start_time = Column(String(50), nullable=False, default='00:00:00')   
-    # enroll_end_date = Column(Date, nullable=False)
-    # enroll_end_time = Column(String(50), nullable=False, default='00:00:00')
+    enroll_start_date = Column(DateTime, nullable=True)
+    enroll_start_time = Column(String(50), nullable=False, default='00:00:00')
+    enroll_end_date = Column(Date, nullable=False)
+    enroll_end_time = Column(String(50), nullable=False, default='00:00:00')
     unit_id = Column(Integer, nullable=False, default=3)
 
 
@@ -4275,23 +4187,21 @@ class ErpDepartment(Base):
     __tablename__ = 'erp_department'
 
     erp_dept_id = Column(Integer, primary_key=True, index=True)
-    erp_dept_unqkey = Column(String(80), nullable=True)
-    erp_inst_id = Column(Integer, nullable=True)
-    erp_school_id = Column(Integer, nullable=True)
-    erp_dept_name = Column(String(100), nullable=True)
-    erp_dept_acronym = Column(String(20), nullable=True)
-    erp_dept_start_year = Column(Integer, nullable=True)
-    erp_dept_pgm_exists = Column(Integer, default=0)
-    created_by = Column(Integer, nullable=True)
-    modified_by = Column(Integer, nullable=True)
-    create_date = Column(TIMESTAMP, server_default=func.current_timestamp())
-    created_date = synonym("create_date")
-    modify_date = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-    modified_date = synonym("modify_date")
-    erp_dept_hod_id = Column(Integer, nullable=True)
+    erp_dept_name = Column(String)
+    erp_dept_unqkey = Column(String(80))
+    erp_inst_id = Column(Integer)
+    erp_school_id = Column(Integer)
+    erp_dept_acronym = Column(String(20))
+    erp_dept_start_year = Column(Integer)
+    erp_dept_pgm_exists = Column(Boolean, default=True)
+    created_by = Column(Integer)
+    modified_by = Column(Integer)
+    create_date = Column(DateTime, default=func.now())
+    modify_date = Column(DateTime, default=func.now(), onupdate=func.now())
+    erp_dept_hod_id = Column(Integer)
     status = Column(Integer, default=1)
-    adm_dept_id = Column(Integer, nullable=True)
-    sync_from = Column(Integer, nullable=True)
+    adm_dept_id = Column(Integer)
+    sync_from = Column(Integer)
 
 
 class ErpCurriculum(Base):
@@ -4307,12 +4217,10 @@ class ErpCurriculum(Base):
     erp_dept_id = Column(Integer, nullable=True)
     erp_school_id = Column(Integer, nullable=True)
     erp_inst_id = Column(Integer, nullable=True)
-    create_date = Column(TIMESTAMP, server_default=func.current_timestamp())
-    created_date = synonym("create_date")
+    create_date = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
     created_by = Column(Integer, nullable=True)
     modified_by = Column(Integer, nullable=True)
     modify_date = Column(TIMESTAMP, server_default=func.current_timestamp(), onupdate=func.current_timestamp())
-    modified_date = synonym("modify_date")
     status = Column(Integer, default=1)
 
 
@@ -6341,9 +6249,10 @@ class LMSMentoringSubGrpDate(Base):
     )
 
 class LMSMapMenteeSchedule(Base):
-    __tablename__ = "lms_map_mentee_schedule"
+    __tablename__ = "lms_mentoring_sub_grp_mentee"
 
     map_mentee_schedule_id = Column(
+        "sub_grp_mentee_id",
         Integer,
         primary_key=True,
         autoincrement=True
@@ -6695,70 +6604,6 @@ class LMSMMPSessionSuggestionIndividualComments(Base):
         back_populates="individual_comments"
     )
 
-class LMSCrossDeptMentor(Base):
-    __tablename__ = "lms_cross_dept_mentor"
-
-    id = Column(
-        Integer,
-        primary_key=True,
-        autoincrement=True
-    )
-
-    mentor_user_id = Column(
-        Integer,
-        ForeignKey("iems_users.id"),
-        nullable=False
-    )
-
-    mentor_dept_id = Column(
-        Integer,
-        ForeignKey("iems_department.dept_id"),
-        nullable=False
-    )
-
-    assigned_dept_id = Column(
-        Integer,
-        ForeignKey("iems_department.dept_id"),
-        nullable=False
-    )
-
-    curriculum_id = Column(
-        Integer,
-        ForeignKey("erp_curriculum.erp_crclm_id"),
-        nullable=True
-    )
-
-    org_id = Column(
-        Integer,
-        nullable=True
-    )
-
-    status = Column(
-        Integer,
-        default=1
-    )
-
-    created_by = Column(
-        Integer,
-        nullable=True
-    )
-
-    modified_by = Column(
-        Integer,
-        nullable=True
-    )
-
-    create_date = Column(
-        DateTime,
-        default=func.now()
-    )
-
-    modify_date = Column(
-        DateTime,
-        default=func.now(),
-        onupdate=func.now()
-    )
-
 class LMSCrossDeptUsers(Base):
     __tablename__ = "lms_cross_dept_users"
 
@@ -7029,13 +6874,19 @@ class LMSConfigType(Base):
         primary_key=True,
         autoincrement=True
     )
-    id = synonym("config_type_id")
 
     config_type = Column(
         String(255),
         nullable=False
     )
-    config_type_name = synonym("config_type")
+
+    @property
+    def config_type_name(self):
+        return self.config_type
+
+    @config_type_name.setter
+    def config_type_name(self, value):
+        self.config_type = value
 
     min_mentees = Column(
         Integer,
@@ -7079,6 +6930,22 @@ class LMSConfigType(Base):
         onupdate=func.now()
     )
 
+    @property
+    def created_date(self):
+        return self.create_date
+
+    @created_date.setter
+    def created_date(self, value):
+        self.create_date = value
+
+    @property
+    def modified_date(self):
+        return self.modify_date
+
+    @modified_date.setter
+    def modified_date(self, value):
+        self.modify_date = value
+
     org_id = Column(
         Integer,
         nullable=True
@@ -7089,210 +6956,63 @@ class LMSConfigType(Base):
         default=1
     )
 
-class CudosCrclmComponent(Base):
-    __tablename__ = "cudos_crclm_component"
 
-    cc_id = Column(Integer, primary_key=True, autoincrement=True)
-    crclm_component_name = Column(String(100))
-    crclm_comp_alias_name = Column(String(100))
-    crclm_component_desc = Column(String(2000))
+class LMSCrossDeptMentor(Base):
+    __tablename__ = "lms_cross_dept_mentor"
 
-    created_by = Column(Integer, ForeignKey("iems_users.id"), nullable=True)
-    created_date = Column(Date, nullable=True)
-    modified_by = Column(Integer, ForeignKey("iems_users.id"), nullable=True)
-    modified_date = Column(Date, nullable=True)
-
-    created_user = relationship(
-        "IEMSUsers",
-        foreign_keys=[created_by]
-    )
-
-    modified_user = relationship(
-        "IEMSUsers",
-        foreign_keys=[modified_by]
-    )
-
-    course_types = relationship(
-        "IEMSCourseType",
-        back_populates="crclm_component"
-    )
-
-class LMSAcademicBatchSemesterCrsStructure(Base):
-    __tablename__ = "lms_academic_batch_semester_crs_structure"
-
-    ctcs_id = Column(Integer, primary_key=True, autoincrement=True)
-
-    academic_batch_id = Column(
+    id = Column(
         Integer,
-        ForeignKey("iems_academic_batch.academic_batch_id"),
+        primary_key=True,
+        autoincrement=True
+    )
+
+    mentor_user_id = Column(
+        Integer,
         nullable=False
     )
 
-    semester_id = Column(
+    mentor_dept_id = Column(
         Integer,
-        ForeignKey("iems_semester.semester_id"),
         nullable=False
     )
 
-    crs_type_id = Column(
+    assigned_dept_id = Column(
         Integer,
-        ForeignKey("iems_course_type.course_type_id"),
         nullable=False
     )
 
-    crs_type_total = Column(Numeric(3, 1))
-    stud_min_crs_enroll = Column(Numeric(3, 1))
-    stud_max_crs_enroll = Column(Numeric(3, 1))
-
-    created_by = Column(
+    curriculum_id = Column(
         Integer,
-        ForeignKey("iems_users.id"),
         nullable=True
     )
 
-    modified_by = Column(
+    org_id = Column(
         Integer,
-        ForeignKey("iems_users.id"),
-        nullable=True
-    )
-
-    created_date = Column(
-        DateTime,
-        server_default=func.current_timestamp()
-    )
-
-    modified_date = Column(
-        DateTime,
-        server_default=func.current_timestamp(),
-        onupdate=func.current_timestamp()
-    )
-
-    academic_batch = relationship("IEMSAcademicBatch")
-
-    semester = relationship("IEMSemester")
-
-    course_type = relationship("IEMSCourseType")
-
-    created_user = relationship(
-        "IEMSUsers",
-        foreign_keys=[created_by]
-    )
-
-    modified_user = relationship(
-        "IEMSUsers",
-        foreign_keys=[modified_by]
-    )
-
-class CudosMapCoursetoStudent(Base):
-    __tablename__ = "cudos_map_courseto_student"
-
-    mcstd_id = Column(Integer, primary_key=True, autoincrement=True)
-
-    academic_batch_id = Column(
-        Integer,
-        ForeignKey("iems_academic_batch.academic_batch_id"),
         nullable=False
-    )
-
-    semester_id = Column(
-        Integer,
-        ForeignKey("iems_semester.semester_id"),
-        nullable=False
-    )
-
-    crs_id = Column(
-        Integer,
-        ForeignKey("iems_courses.crs_id"),
-        nullable=False
-    )
-
-    section_id = Column(
-        Integer,
-        ForeignKey("iems_section.id"),
-        nullable=False
-    )
-
-    batch_id = Column(
-        Integer,
-        ForeignKey("iems_section.id"),
-        nullable=True
-    )
-
-    student_id = Column(
-        Integer,
-        ForeignKey("iems_students.student_id"),
-        nullable=False
-    )
-
-    std_academic_batch_id = Column(
-        Integer,
-        ForeignKey("iems_academic_batch.academic_batch_id"),
-        nullable=False
-    )
-
-    std_semester_id = Column(
-        Integer,
-        ForeignKey("iems_semester.semester_id"),
-        nullable=True
     )
 
     status = Column(
         Integer,
-        ForeignKey("cudos_master_type_details.mt_details_id"),
-        nullable=True,
         default=1
     )
 
     created_by = Column(
         Integer,
-        ForeignKey("iems_users.id"),
         nullable=True
+    )
+
+    create_date = Column(
+        DateTime,
+        default=func.now()
     )
 
     modified_by = Column(
         Integer,
-        ForeignKey("iems_users.id"),
         nullable=True
     )
 
-    created_date = Column(DateTime)
-    modified_date = Column(DateTime)
-
-    crs_reg_flag = Column(Integer, default=0)
-
-    opel_crs_flag = Column(Integer, default=0)
-
-    academic_batch = relationship(
-        "IEMSAcademicBatch",
-        foreign_keys=[academic_batch_id]
-    )
-
-    semester = relationship(
-        "IEMSemester",
-        foreign_keys=[semester_id]
-    )
-
-    course = relationship(
-        "IEMSCourses",
-        foreign_keys=[crs_id]
-    )
-
-    student = relationship(
-        "IEMStudents",
-        foreign_keys=[student_id]
-    )
-
-    registration_status = relationship(
-        "MasterTypeDetails",
-        foreign_keys=[status]
-    )
-
-    created_user = relationship(
-        "IEMSUsers",
-        foreign_keys=[created_by]
-    )
-
-    modified_user = relationship(
-        "IEMSUsers",
-        foreign_keys=[modified_by]
+    modify_date = Column(
+        DateTime,
+        default=func.now(),
+        onupdate=func.now()
     )

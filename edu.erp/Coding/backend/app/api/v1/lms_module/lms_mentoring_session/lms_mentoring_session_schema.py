@@ -87,3 +87,9 @@ class IndividualCommentRequest(BaseModel):
 class MenteeResponseRequest(BaseModel):
     student_id: int
     schedule_id: int
+
+
+class UpdateSessionStatusRequest(BaseModel):
+    schedule_id: int
+    sub_group_id: int
+    status: str

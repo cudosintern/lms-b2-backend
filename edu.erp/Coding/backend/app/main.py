@@ -29,13 +29,8 @@ origins = [
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "http://localhost:3001",
-        "http://127.0.0.1:3001",
-        "http://192.168.56.1:3000",
-    ],
+    allow_origins=["http://localhost:3000"],
+    # allow_origins=["*"],
     allow_credentials=True,
     allow_methods=["*"],  # Allow all HTTP methods
     allow_headers=["*"],  # Allow all headers
@@ -43,7 +38,7 @@ app.add_middleware(
 
 app.include_router(api_router)
 # Preserve existing unprefixed routes while exposing the versioned paths used by the frontend.
-app.include_router(api_router, prefix="/api/v1")
+# app.include_router(api_router, prefix="/api/v1")
 
 
 @app.get("/")

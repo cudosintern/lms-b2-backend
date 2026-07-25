@@ -1,4 +1,5 @@
 from datetime import datetime
+from typing import Optional, List
 
 from fastapi import APIRouter, Depends, Form, UploadFile, File
 from sqlalchemy.orm import Session
@@ -217,6 +218,53 @@ def get_groups_by_academic_batch(
 
 
 # ==========================================================
+# GET GROUP MENTEES (WITHOUT SEMESTER)
+# ==========================================================
+@router.get("/get_group_mentees/{mentors_group_id}")
+def get_group_mentees_without_semester(
+    mentors_group_id: int,
+    db: Session = Depends(get_db)
+):
+    try:
+        terms = db.query(LMSMentorsGroupTerms).filter(
+            LMSMentorsGroupTerms.mentors_group_id == mentors_group_id
+        ).all()
+        
+        if not terms:
+            return returnSuccess([])
+            
+        term_ids = [t.mentors_group_terms_id for t in terms]
+        
+        mentees = db.query(
+            LMSGroupMentees,
+            IEMStudents
+        ).join(
+            IEMStudents,
+            IEMStudents.student_id == LMSGroupMentees.student_id
+        ).filter(
+            LMSGroupMentees.mentors_group_terms_id.in_(term_ids)
+        ).all()
+        
+        result = []
+        seen_student_ids = set()
+        for mentee, student in mentees:
+            if student.student_id not in seen_student_ids:
+                seen_student_ids.add(student.student_id)
+                result.append({
+                    "student_id": student.student_id,
+                    "usn": student.usno,
+                    "student_usn": student.usno,
+                    "student_name": student.name,
+                    "email": student.email,
+                    "student_email": student.email,
+                    "mobile": student.mobile
+                })
+                
+        return returnSuccess(result)
+    except Exception as e:
+        return returnException(str(e))
+
+# ==========================================================
 # GET GROUP MENTEES
 # ==========================================================
 @router.get("/get_group_mentees/{mentors_group_id}/{semester_id}")
@@ -262,56 +310,6 @@ def get_group_mentees(
                 "student_email": student.email,
                 "mobile": student.mobile
             })
-
-        return returnSuccess(result)
-
-    except Exception as e:
-        return returnException(str(e))
-
-
-@router.get("/get_group_mentees/{mentors_group_id}")
-def get_group_mentees_without_semester(
-    mentors_group_id: int,
-    db: Session = Depends(get_db)
-):
-    try:
-        terms = db.query(
-            LMSMentorsGroupTerms
-        ).filter(
-            LMSMentorsGroupTerms.mentors_group_id == mentors_group_id
-        ).all()
-
-        if not terms:
-            return returnSuccess([])
-
-        term_ids = [t.mentors_group_terms_id for t in terms]
-
-        mentees = db.query(
-            LMSGroupMentees,
-            IEMStudents
-        ).join(
-            IEMStudents,
-            IEMStudents.student_id ==
-            LMSGroupMentees.student_id
-        ).filter(
-            LMSGroupMentees.mentors_group_terms_id.in_(term_ids)
-        ).all()
-
-        result = []
-        seen_student_ids = set()
-
-        for mentee, student in mentees:
-            if student.student_id not in seen_student_ids:
-                seen_student_ids.add(student.student_id)
-                result.append({
-                    "student_id": student.student_id,
-                    "usn": student.usno,
-                    "student_usn": student.usno,
-                    "student_name": student.name,
-                    "email": student.email,
-                    "student_email": student.email,
-                    "mobile": student.mobile
-                })
 
         return returnSuccess(result)
 
@@ -596,43 +594,46 @@ def get_mentoring_sessions(
 
                     for dt in dates:
 
-                        if (month is None or dt.start_date.month == month) and (year is None or dt.start_date.year == year):
+                        # Only filter by month and year if they are both provided
+                        if month is not None and year is not None:
+                            if not (dt.start_date.month == month and dt.start_date.year == year):
+                                continue
 
-                            include_schedule = True
-
-                            mentee_count = db.query(
-                                LMSMapMenteeSchedule
-                            ).filter(
-                                LMSMapMenteeSchedule.sub_group_id ==
-                                subgroup.sub_group_id
-                            ).count()
-
-                            date_list.append({
-
-                                "sub_group_date_id":
-                                dt.sub_group_date_id,
-
-                                "start_date":
-                                dt.start_date,
-
-                                "end_date":
-                                dt.end_date,
-
-                                "start_time":
-                                dt.start_time,
-
-                                "end_time":
-                                dt.end_time,
-
-                                "status":
-                                dt.status,
-
-                                "mentee_count":
-                                mentee_count
-                            })
-
-                    if date_list or (month is None and year is None):
                         include_schedule = True
+
+                        mentee_count = db.query(
+                            LMSMapMenteeSchedule
+                        ).filter(
+                            LMSMapMenteeSchedule.sub_group_id ==
+                            subgroup.sub_group_id
+                        ).count()
+
+                        date_list.append({
+
+                            "sub_group_date_id":
+                            dt.sub_group_date_id,
+
+                            "start_date":
+                            dt.start_date,
+
+                            "end_date":
+                            dt.end_date,
+
+                            "start_time":
+                            dt.start_time,
+
+                            "end_time":
+                            dt.end_time,
+
+                            "status":
+                            dt.status,
+
+                            "mentee_count":
+                            mentee_count
+                        })
+
+                    if date_list:
+
                         subgroup_list.append({
 
                             "sub_group_id":
@@ -648,7 +649,7 @@ def get_mentoring_sessions(
                             date_list
                         })
 
-                if include_schedule or (month is None and year is None):
+                if include_schedule:
 
                     result.append({
 
@@ -1164,4 +1165,54 @@ def get_individual_comments(
 
     except Exception as e:
 
+        return returnException(str(e))
+
+
+# ==========================================================
+# POST UPDATE SESSION STATUS
+# ==========================================================
+@router.post("/update_session_status")
+def update_session_status(
+    req: UpdateSessionStatusRequest,
+    current_user: dict = Depends(get_current_user),
+    db: Session = Depends(get_db)
+):
+    try:
+        # Map string status to tinyint matching frontend dropdown values
+        STATUS_MAP = {
+            "Yet to start": 0,
+            "In progress": 1,
+            "Complete": 2,
+            "Cancelled": 3
+        }
+        status_int = STATUS_MAP.get(req.status)
+        if status_int is None:
+            return returnException(
+                f"Invalid status '{req.status}'. Must be one of: Yet to start, In progress, Complete, Cancelled"
+            )
+
+        # Update all date rows for this sub_group_id
+        rows = db.query(LMSMentoringSubGrpDate).filter(
+            LMSMentoringSubGrpDate.sub_group_id == req.sub_group_id
+        ).all()
+
+        if not rows:
+            return returnException("No session dates found for the given sub_group_id")
+
+        user_id = current_user.get("user_id")
+        for row in rows:
+            row.status = status_int
+            row.modified_by = user_id
+
+        db.commit()
+
+        return returnSuccess({
+            "schedule_id": req.schedule_id,
+            "sub_group_id": req.sub_group_id,
+            "status": req.status,
+            "status_int": status_int
+        })
+
+    except Exception as e:
+        db.rollback()
         return returnException(str(e))

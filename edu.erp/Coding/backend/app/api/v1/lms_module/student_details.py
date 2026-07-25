@@ -1,6 +1,14 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, HTTPException, status
+from fastapi.responses import FileResponse
 from sqlalchemy.orm import Session
 from sqlalchemy import text
+import os
+
+# ReportLab Imports for PDF generation
+from reportlab.lib.pagesizes import letter
+from reportlab.lib import colors
+from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, TableStyle
+from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 
 from app.core.database import get_db
 from app.utils.http_return_helper import returnSuccess, returnException
@@ -51,6 +59,30 @@ def get_student_info(
                 IEMProgram.pgm_id == student.program_id
             ).first()
 
+        # ── Mentoring (Curriculum & Counsellor Name) ─────────────────
+        curriculum = ""
+        counsellor_name = ""
+        try:
+            mentoring_sql = """
+                SELECT 
+                    ab.academic_batch_code AS curriculum_name,
+                    COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.username) AS counsellor_name
+                FROM lms_group_mentees gme
+                JOIN lms_group_mentors gm ON gme.group_mentor_id = gm.group_mentor_id
+                LEFT JOIN iems_users u ON gm.mentor_id = u.id
+                JOIN lms_mentors_group_terms mgt ON gme.mentors_group_terms_id = mgt.mentors_group_terms_id
+                JOIN lms_mentors_group mg ON mgt.mentors_group_id = mg.mentors_group_id
+                LEFT JOIN iems_academic_batch ab ON mg.academic_batch_id = ab.academic_batch_id
+                WHERE gme.student_id = :sid
+                LIMIT 1
+            """
+            mentoring_row = db.execute(text(mentoring_sql), {"sid": student_id}).mappings().first()
+            if mentoring_row:
+                curriculum = mentoring_row["curriculum_name"] or ""
+                counsellor_name = mentoring_row["counsellor_name"] or ""
+        except Exception:
+            pass
+
         # ── Personal Info ────────────────────────────────────────────
         personal_info = {
             "full_name":      student.name or "",
@@ -59,8 +91,8 @@ def get_student_info(
             "regno":          student.regno or "",
             "department":     department.dept_name if department else "",
             "program":        program.pgm_title if program else "",
-            "curriculum":     "",
-            "counsellor_name": "",
+            "curriculum":     curriculum,
+            "counsellor_name": counsellor_name,
             "father_name":       student.fathers_name or "",
             "father_profession": student.fathers_occupation or "",
             "mother_name":       student.mothers_name or "",
@@ -78,7 +110,7 @@ def get_student_info(
         }
 
         # ── Addresses ────────────────────────────────────────────────
-        # Try to pull from iems_student_parents table or leave blank
+        # Pull directly from iems_students table columns using raw SQL since they are not mapped in SQLAlchemy model
         addresses = {
             "permanent": {
                 "address":     "",
@@ -97,26 +129,14 @@ def get_student_info(
                 "postal_code": "",
             },
         }
-
         try:
-            addr_sql = """
-                SELECT permanent_address1, permanent_address2,
-                       permanent_city, permanent_state,
-                       permanent_country, permanent_phone
-                FROM iems_student_parents
-                WHERE student_id = :sid
-                LIMIT 1
-            """
-            addr_row = db.execute(text(addr_sql), {"sid": student_id}).fetchone()
+            addr_sql = "SELECT permanent_address, present_address, city FROM iems_students WHERE student_id = :sid"
+            addr_row = db.execute(text(addr_sql), {"sid": student_id}).mappings().first()
             if addr_row:
-                addresses["permanent"] = {
-                    "address":     addr_row[0] or "",
-                    "address2":    addr_row[1] or "",
-                    "city":        addr_row[2] or "",
-                    "state":       addr_row[3] or "",
-                    "country":     addr_row[4] or "",
-                    "postal_code": "",
-                }
+                addresses["permanent"]["address"] = addr_row["permanent_address"] or ""
+                addresses["permanent"]["city"] = addr_row["city"] or ""
+                addresses["correspondence"]["address"] = addr_row["present_address"] or ""
+                addresses["correspondence"]["city"] = addr_row["city"] or ""
         except Exception:
             pass
 
@@ -158,64 +178,36 @@ def get_student_info(
         marks_details = []
         attendance_details = []
         try:
-            marks_sql = """
-                SELECT 
-                    sc.semester_id         AS semester,
-                    c.course_code          AS course_code,
-                    c.course_title         AS course_title,
-                    ot.occasion_name       AS occasion_name,
-                    cm.secured_marks       AS secured_marks,
-                    cm.total_marks         AS total_marks
-                FROM iems_cia_marks cm
-                JOIN iems_s_courses c        ON cm.course_id = c.course_id
-                JOIN iems_s_occasion_type ot ON cm.occasion_type_id = ot.occasion_type_id
-                JOIN iems_s_courses sc       ON cm.course_id = sc.course_id
-                WHERE cm.student_id = :sid
-                ORDER BY c.course_code, ot.occasion_name
-            """
-            marks_rows = db.execute(text(marks_sql), {"sid": student_id}).fetchall()
-
-            # Group by course
-            course_map: dict = {}
-            for row in marks_rows:
-                sem        = row[0]
-                code       = row[1] or ""
-                title      = row[2] or ""
-                occ_name   = row[3] or ""
-                sec_marks  = row[4]
-                tot_marks  = row[5]
-
-                if code not in course_map:
-                    course_map[code] = {
-                        "semester":    sem,
-                        "course_code": code,
-                        "course_title": title,
-                        "occasions":   []
-                    }
-                course_map[code]["occasions"].append({
-                    "occasion_name":  occ_name,
-                    "secured_marks":  sec_marks,
-                    "total_marks":    tot_marks,
-                })
-
-            marks_details = list(course_map.values())
-        except Exception:
-            pass
-
-        try:
-            att_sql = """
-                SELECT c.course_code, 
-                       ROUND(SUM(a.attended_count) * 100.0 / NULLIF(SUM(a.held_count), 0), 2) AS attendance_percentage
-                FROM iems_attendance a
-                JOIN iems_s_courses c ON a.course_id = c.course_id
-                WHERE a.student_id = :sid
-                GROUP BY c.course_code
-            """
-            att_rows = db.execute(text(att_sql), {"sid": student_id}).fetchall()
-            attendance_details = [
-                {"course_code": r[0], "attendance_percentage": float(r[1]) if r[1] else None}
-                for r in att_rows
-            ]
+            if student and student.usno:
+                att_sql = """
+                    SELECT 
+                        ma.semester_id AS semester,
+                        c.crs_code AS course_code,
+                        c.crs_title AS course_title,
+                        ROUND(
+                            SUM(CASE WHEN sa.attendance_status = 'Present' THEN ma.attendance_class_count ELSE 0 END) * 100.0 / 
+                            NULLIF(SUM(ma.attendance_class_count), 0), 
+                            2
+                        ) AS attendance_percentage
+                    FROM lms_map_student_attendance sa
+                    JOIN lms_manage_attendance ma ON sa.attendance_id = ma.attendance_id
+                    LEFT JOIN iems_courses c ON ma.crs_id = c.crs_id
+                    WHERE sa.student_usn = :usn AND ma.status = 1
+                    GROUP BY ma.semester_id, c.crs_code, c.crs_title
+                """
+                att_rows = db.execute(text(att_sql), {"usn": student.usno.strip()}).mappings().all()
+                for r in att_rows:
+                    attendance_details.append({
+                        "course_code": r["course_code"] or "",
+                        "course_title": r["course_title"] or "",
+                        "attendance_percentage": float(r["attendance_percentage"]) if r["attendance_percentage"] is not None else None
+                    })
+                    marks_details.append({
+                        "semester": r["semester"] or 1,
+                        "course_code": r["course_code"] or "",
+                        "course_title": r["course_title"] or "",
+                        "occasions": []
+                    })
         except Exception:
             pass
 
@@ -286,3 +278,456 @@ def get_student_info(
 
     except Exception as e:
         return returnException(str(e))
+
+
+@router.get("/export/pdf")
+def export_student_pdf(
+    usn: str,
+    db: Session = Depends(get_db)
+):
+    if not usn or usn.strip() == "":
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="USN is required"
+        )
+    
+    usn = usn.strip()
+    
+    # ── Fetch Student Details ──
+    student = db.query(IEMStudents).filter(
+        IEMStudents.usno == usn
+    ).first()
+
+    if not student:
+        raise HTTPException(status_code=404, detail="Student not found")
+
+    student_id = student.student_id
+
+    # ── Department ──────────────────────────────────────────────
+    department = None
+    if student.department_id:
+        department = db.query(IEMSDepartment).filter(
+            IEMSDepartment.dept_id == student.department_id
+        ).first()
+    
+    if not department and student.academic_batch_id:
+        try:
+            dept_sql = """
+                SELECT d.dept_name
+                FROM iems_academic_batch ab
+                JOIN iems_department d ON ab.dept_id = d.dept_id
+                WHERE ab.academic_batch_id = :abid
+                LIMIT 1
+            """
+            dept_row = db.execute(text(dept_sql), {"abid": student.academic_batch_id}).mappings().first()
+            if dept_row:
+                class MockDept:
+                    def __init__(self, name):
+                        self.dept_name = name
+                department = MockDept(dept_row["dept_name"])
+        except Exception:
+            pass
+
+    # ── Program ─────────────────────────────────────────────────
+    program = None
+    if student.program_id:
+        program = db.query(IEMProgram).filter(
+            IEMProgram.pgm_id == student.program_id
+        ).first()
+
+    # ── Mentoring (Curriculum & Counsellor Name) ─────────────────
+    curriculum = ""
+    counsellor_name = ""
+    try:
+        mentoring_sql = """
+            SELECT 
+                ab.academic_batch_code AS curriculum_name,
+                COALESCE(NULLIF(TRIM(CONCAT_WS(' ', u.first_name, u.last_name)), ''), u.username) AS counsellor_name
+            FROM lms_group_mentees gme
+            JOIN lms_group_mentors gm ON gme.group_mentor_id = gm.group_mentor_id
+            LEFT JOIN iems_users u ON gm.mentor_id = u.id
+            JOIN lms_mentors_group_terms mgt ON gme.mentors_group_terms_id = mgt.mentors_group_terms_id
+            JOIN lms_mentors_group mg ON mgt.mentors_group_id = mg.mentors_group_id
+            LEFT JOIN iems_academic_batch ab ON mg.academic_batch_id = ab.academic_batch_id
+            WHERE gme.student_id = :sid
+            LIMIT 1
+        """
+        mentoring_row = db.execute(text(mentoring_sql), {"sid": student_id}).mappings().first()
+        if mentoring_row:
+            curriculum = mentoring_row["curriculum_name"] or ""
+            counsellor_name = mentoring_row["counsellor_name"] or ""
+    except Exception:
+        pass
+
+    # ── Personal Info ────────────────────────────────────────────
+    personal_info = {
+        "full_name":      student.name or "",
+        "usn":            student.usno or "",
+        "application_no": student.application_no or "",
+        "regno":          student.regno or "",
+        "department":     department.dept_name if department else "",
+        "program":        program.pgm_title if program else "",
+        "curriculum":     curriculum,
+        "counsellor_name": counsellor_name,
+        "father_name":       student.fathers_name or "",
+        "father_profession": student.fathers_occupation or "",
+        "mother_name":       student.mothers_name or "",
+        "mother_profession": student.mothers_occupation or "",
+        "parent_guardian_name": student.guardian_name or "",
+        "relationship":      "Guardian" if student.guardian_name else "",
+        "home_phone":    student.fathers_phone or "",
+        "cell_phone":    student.mobile or "",
+        "contact":       student.mobile or "",
+        "email":         student.email or "",
+        "blood_group":   student.blood_group or "",
+        "dob":           str(student.dob) if student.dob else "",
+        "gender":        student.gender or "",
+        "nationality":   student.nationality or "",
+    }
+
+    # ── Addresses ────────────────────────────────────────────────
+    addresses = {
+        "permanent": {
+            "address":     "",
+            "address2":    "",
+            "city":        "",
+            "state":       "",
+            "country":     "",
+            "postal_code": "",
+        },
+        "correspondence": {
+            "address":     "",
+            "address2":    "",
+            "city":        "",
+            "state":       "",
+            "country":     "",
+            "postal_code": "",
+        },
+    }
+    try:
+        addr_sql = "SELECT permanent_address, present_address, city FROM iems_students WHERE student_id = :sid"
+        addr_row = db.execute(text(addr_sql), {"sid": student_id}).mappings().first()
+        if addr_row:
+            addresses["permanent"]["address"] = addr_row["permanent_address"] or ""
+            addresses["permanent"]["city"] = addr_row["city"] or ""
+            addresses["correspondence"]["address"] = addr_row["present_address"] or ""
+            addresses["correspondence"]["city"] = addr_row["city"] or ""
+    except Exception:
+        pass
+
+    # ── Education Details (10th / 12th) ──────────────────────────
+    education_details = {
+        "tenth_board":      "",
+        "tenth_year":       "",
+        "tenth_percentage": "",
+        "twelfth_board":    "",
+        "twelfth_year":     "",
+        "twelfth_percentage": "",
+    }
+
+    # ── Marks & Attendance ───────────────────────────────────────
+    marks_details = []
+    attendance_details = []
+    try:
+        att_sql = """
+            SELECT 
+                ma.semester_id AS semester,
+                c.crs_code AS course_code,
+                c.crs_title AS course_title,
+                ROUND(
+                    SUM(CASE WHEN sa.attendance_status = 'Present' THEN ma.attendance_class_count ELSE 0 END) * 100.0 / 
+                    NULLIF(SUM(ma.attendance_class_count), 0), 
+                    2
+                ) AS attendance_percentage
+            FROM lms_map_student_attendance sa
+            JOIN lms_manage_attendance ma ON sa.attendance_id = ma.attendance_id
+            LEFT JOIN iems_courses c ON ma.crs_id = c.crs_id
+            WHERE sa.student_usn = :usn AND ma.status = 1
+            GROUP BY ma.semester_id, c.crs_code, c.crs_title
+        """
+        att_rows = db.execute(text(att_sql), {"usn": usn}).mappings().all()
+        for r in att_rows:
+            attendance_details.append({
+                "course_code": r["course_code"] or "",
+                "course_title": r["course_title"] or "",
+                "attendance_percentage": float(r["attendance_percentage"]) if r["attendance_percentage"] is not None else None
+            })
+            marks_details.append({
+                "semester": r["semester"] or 1,
+                "course_code": r["course_code"] or "",
+                "course_title": r["course_title"] or "",
+                "occasions": []
+            })
+    except Exception:
+        pass
+
+    # ── Questionnaire Responses ──────────────────────────────────
+    questionnaire_responses = []
+    try:
+        responses = db.query(
+            LMSMenteeQuestionnaireResponse
+        ).filter(
+            LMSMenteeQuestionnaireResponse.student_id == student_id
+        ).order_by(LMSMenteeQuestionnaireResponse.created_date.desc()).all()
+
+        for resp in responses:
+            schedule = db.query(LMSMentoringSchedule).filter(
+                LMSMentoringSchedule.schedule_id == resp.schedule_id
+            ).first()
+
+            response_ques = db.query(LMSMenteeQuestionnaireResponseQue).filter(
+                LMSMenteeQuestionnaireResponseQue.questionnaire_response_id ==
+                resp.questionnaire_response_id
+            ).all()
+
+            for rq in response_ques:
+                que = db.query(LMSQuestionnairesQuestions).filter(
+                    LMSQuestionnairesQuestions.questionnaire_que_id ==
+                    rq.questionnaire_que_id
+                ).first()
+
+                response_value = rq.text_answer or ""
+                if not response_value:
+                    sel_opts = db.query(
+                        LMSMenteeQuestionnaireResponseOption,
+                        LMSQuestionnairesOptions
+                    ).join(
+                        LMSQuestionnairesOptions,
+                        LMSQuestionnairesOptions.questionnaire_options_id ==
+                        LMSMenteeQuestionnaireResponseOption.questionnaire_options_id
+                    ).filter(
+                        LMSMenteeQuestionnaireResponseOption.questionnaire_response_que_id ==
+                        rq.questionnaire_response_que_id
+                    ).all()
+                    if sel_opts:
+                        response_value = ", ".join(
+                            opt.specification for _, opt in sel_opts
+                            if opt.specification
+                        )
+
+                questionnaire_responses.append({
+                    "question_text":  que.question if que else "",
+                    "response_value": response_value,
+                    "submitted_at":   resp.created_date.strftime("%Y-%m-%d %H:%M:%S")
+                        if resp.created_date else "",
+                })
+    except Exception:
+        pass
+
+    data = {
+        "personal_info":            personal_info,
+        "addresses":                addresses,
+        "education_details":        education_details,
+        "marks_details":            marks_details,
+        "attendance_details":       attendance_details,
+        "questionnaire_responses":  questionnaire_responses,
+    }
+
+    # PDF generation path
+    file_path = f"app/uploads/student_details_{usn}.pdf"
+    os.makedirs(os.path.dirname(file_path), exist_ok=True)
+    
+    # Setup document
+    doc = SimpleDocTemplate(
+        file_path,
+        pagesize=letter,
+        rightMargin=40, leftMargin=40, topMargin=40, bottomMargin=40
+    )
+    
+    styles = getSampleStyleSheet()
+    
+    # Custom styles
+    title_style = ParagraphStyle(
+        'DocTitle',
+        parent=styles['Heading1'],
+        fontName='Helvetica-Bold',
+        fontSize=18,
+        textColor=colors.HexColor('#0F4C81'),
+        alignment=1, # Center
+        spaceAfter=15
+    )
+    
+    section_heading = ParagraphStyle(
+        'SectionHeading',
+        parent=styles['Heading2'],
+        fontName='Helvetica-Bold',
+        fontSize=13,
+        textColor=colors.HexColor('#1D3557'),
+        spaceBefore=12,
+        spaceAfter=6,
+        keepWithNext=True
+    )
+    
+    normal_text = ParagraphStyle(
+        'NormalText',
+        parent=styles['Normal'],
+        fontName='Helvetica',
+        fontSize=9,
+        leading=12,
+        textColor=colors.HexColor('#2B2D42')
+    )
+    
+    header_text = ParagraphStyle(
+        'HeaderStyle',
+        parent=normal_text,
+        fontName='Helvetica-Bold',
+        textColor=colors.white
+    )
+
+    story = []
+    
+    # Document Header
+    story.append(Paragraph("Student Profile & Academic Record", title_style))
+    story.append(Spacer(1, 10))
+    
+    # Section: Personal Information
+    story.append(Paragraph("Personal Information", section_heading))
+    pi = data["personal_info"]
+    pi_data = [
+        [
+            Paragraph("<b>USN:</b>", normal_text), Paragraph(str(usn), normal_text),
+            Paragraph("<b>Full Name:</b>", normal_text), Paragraph(pi.get("full_name", ""), normal_text)
+        ],
+        [
+            Paragraph("<b>Email:</b>", normal_text), Paragraph(pi.get("email") or "N/A", normal_text),
+            Paragraph("<b>Contact:</b>", normal_text), Paragraph(pi.get("contact") or "N/A", normal_text)
+        ],
+        [
+            Paragraph("<b>DOB:</b>", normal_text), Paragraph(pi.get("dob") or "N/A", normal_text),
+            Paragraph("<b>Gender:</b>", normal_text), Paragraph(pi.get("gender") or "N/A", normal_text)
+        ],
+        [
+            Paragraph("<b>Department:</b>", normal_text), Paragraph(pi.get("department") or "N/A", normal_text),
+            Paragraph("<b>Program:</b>", normal_text), Paragraph(pi.get("program", ""), normal_text)
+        ],
+        [
+            Paragraph("<b>Curriculum:</b>", normal_text), Paragraph(pi.get("curriculum", "N/A"), normal_text),
+            Paragraph("", normal_text), Paragraph("", normal_text)
+        ]
+    ]
+    t_pi = Table(pi_data, colWidths=[90, 180, 90, 180])
+    t_pi.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+        ('PADDING', (0,0), (-1,-1), 6),
+        ('BACKGROUND', (0,0), (0,-1), colors.HexColor('#F1FAEE')),
+        ('BACKGROUND', (2,0), (2,-1), colors.HexColor('#F1FAEE')),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    story.append(t_pi)
+    story.append(Spacer(1, 12))
+    
+    # Section: Addresses
+    story.append(Paragraph("Address Details", section_heading))
+    perm = data["addresses"]["permanent"]
+    corr = data["addresses"]["correspondence"]
+    
+    perm_str = f"{perm['address']}<br/>{perm['city']}"
+    corr_str = f"{corr['address']}<br/>{corr['city']}"
+    
+    addr_data = [
+        [Paragraph("<b>Permanent Address</b>", header_text), Paragraph("<b>Correspondence Address</b>", header_text)],
+        [Paragraph(perm_str, normal_text), Paragraph(corr_str, normal_text)]
+    ]
+    t_addr = Table(addr_data, colWidths=[270, 270])
+    t_addr.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#457B9D')),
+        ('PADDING', (0,0), (-1,-1), 8),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+    ]))
+    story.append(t_addr)
+    story.append(Spacer(1, 12))
+    
+    # Section: Academic Performance percentages (10th & 12th)
+    story.append(Paragraph("Education Qualifications", section_heading))
+    edu = data["education_details"]
+    edu_data = [
+        [Paragraph("<b>Qualification</b>", header_text), Paragraph("<b>Board/University</b>", header_text), Paragraph("<b>Year of Passing</b>", header_text), Paragraph("<b>Percentage</b>", header_text)],
+        [Paragraph("10th Standard / SSLC", normal_text), Paragraph(edu["tenth_board"] or "N/A", normal_text), Paragraph(str(edu["tenth_year"]) or "N/A", normal_text), Paragraph(f"{edu['tenth_percentage']}%" if edu['tenth_percentage'] else "N/A", normal_text)],
+        [Paragraph("12th Standard / PUC", normal_text), Paragraph(edu["twelfth_board"] or "N/A", normal_text), Paragraph(str(edu["twelfth_year"]) or "N/A", normal_text), Paragraph(f"{edu['twelfth_percentage']}%" if edu['twelfth_percentage'] else "N/A", normal_text)]
+    ]
+    t_edu = Table(edu_data, colWidths=[150, 180, 100, 110])
+    t_edu.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#457B9D')),
+        ('PADDING', (0,0), (-1,-1), 6),
+        ('ALIGN', (3,0), (3,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    story.append(t_edu)
+    story.append(Spacer(1, 12))
+
+    # Section: Questionnaire Responses
+    story.append(Paragraph("Questionnaire Responses", section_heading))
+    q_data = [
+        [Paragraph("<b>Question</b>", header_text), Paragraph("<b>Response Value</b>", header_text), Paragraph("<b>Submitted At</b>", header_text)]
+    ]
+    for q in data["questionnaire_responses"]:
+        q_data.append([
+            Paragraph(q["question_text"], normal_text),
+            Paragraph(q["response_value"], normal_text),
+            Paragraph(q["submitted_at"], normal_text)
+        ])
+    t_q = Table(q_data, colWidths=[200, 240, 100])
+    t_q.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#457B9D')),
+        ('PADDING', (0,0), (-1,-1), 6),
+        ('VALIGN', (0,0), (-1,-1), 'TOP'),
+    ]))
+    story.append(t_q)
+    story.append(Spacer(1, 12))
+    
+    # Section: Course-wise Attendance
+    story.append(Paragraph("Course-wise Attendance Record", section_heading))
+    att_data = [
+        [Paragraph("<b>Course Code</b>", header_text), Paragraph("<b>Course Title</b>", header_text), Paragraph("<b>Attendance %</b>", header_text)]
+    ]
+    for att in data["attendance_details"]:
+        att_data.append([
+            Paragraph(att["course_code"], normal_text),
+            Paragraph(att["course_title"], normal_text),
+            Paragraph(f"{att['attendance_percentage']}%", normal_text)
+        ])
+    t_att = Table(att_data, colWidths=[100, 320, 120])
+    t_att.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#457B9D')),
+        ('PADDING', (0,0), (-1,-1), 6),
+        ('ALIGN', (2,0), (2,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    story.append(t_att)
+    story.append(Spacer(1, 12))
+    
+    # Section: Marks secured for all occasions & all semesters
+    story.append(Paragraph("Semester-wise Academic Marks", section_heading))
+    marks_rows_list = [
+        [Paragraph("<b>Sem</b>", header_text), Paragraph("<b>Course Code</b>", header_text), Paragraph("<b>Course Title</b>", header_text), Paragraph("<b>Occasion Breakdown (Marks Secured / Max)</b>", header_text)]
+    ]
+    for course in data["marks_details"]:
+        breakdown_parts = []
+        for occ in course["occasions"]:
+            breakdown_parts.append(f"{occ['occasion_name']}: <b>{occ['secured_marks']}</b>/{occ['total_marks']}")
+        breakdown_str = " | ".join(breakdown_parts) if breakdown_parts else "No marks recorded"
+        
+        marks_rows_list.append([
+            Paragraph(str(course["semester"]), normal_text),
+            Paragraph(course["course_code"], normal_text),
+            Paragraph(course["course_title"], normal_text),
+            Paragraph(breakdown_str, normal_text)
+        ])
+    t_marks = Table(marks_rows_list, colWidths=[40, 80, 160, 260])
+    t_marks.setStyle(TableStyle([
+        ('GRID', (0,0), (-1,-1), 0.5, colors.lightgrey),
+        ('BACKGROUND', (0,0), (-1,0), colors.HexColor('#457B9D')),
+        ('PADDING', (0,0), (-1,-1), 6),
+        ('ALIGN', (0,0), (0,-1), 'CENTER'),
+        ('VALIGN', (0,0), (-1,-1), 'MIDDLE'),
+    ]))
+    story.append(t_marks)
+
+    # Build PDF doc
+    doc.build(story)
+    
+    return FileResponse(path=file_path, filename=f"student_profile_{usn}.pdf", media_type='application/pdf')
