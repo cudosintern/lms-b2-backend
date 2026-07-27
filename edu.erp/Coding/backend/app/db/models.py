@@ -7029,13 +7029,17 @@ class LMSConfigType(Base):
         primary_key=True,
         autoincrement=True
     )
-    id = synonym("config_type_id")
 
-    config_type = Column(
-        String(255),
+    # # config_type = Column(
+    #     String(255),
+    #     nullable=False
+    # )
+    # config_type_name = synonym("config_type")
+
+    config_type_name = Column(
+        String(100),
         nullable=False
     )
-    config_type_name = synonym("config_type")
 
     min_mentees = Column(
         Integer,
@@ -7068,12 +7072,13 @@ class LMSConfigType(Base):
         nullable=True
     )
 
-    create_date = Column(
+    created_date = Column(
         DateTime,
         default=func.now()
     )
 
-    modify_date = Column(
+    # modify_date = Column(
+    modified_date = Column(
         DateTime,
         default=func.now(),
         onupdate=func.now()
@@ -7241,6 +7246,7 @@ class CudosMapCoursetoStudent(Base):
         ForeignKey("cudos_master_type_details.mt_details_id"),
         nullable=True,
         default=1
+        # nullable=True
     )
 
     created_by = Column(
