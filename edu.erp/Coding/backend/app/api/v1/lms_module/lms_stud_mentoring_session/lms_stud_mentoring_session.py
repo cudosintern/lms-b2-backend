@@ -589,27 +589,68 @@ def save_questionnaire_response(
             )
 
         # ==========================================================
-        # Duplicate Submission Validation
+        # CHECK IF RESPONSE ALREADY EXISTS - UPDATE INSTEAD OF REJECT
         # ==========================================================
 
-        submitted = (
-            db.query(
-                LMSMenteeQuestionnaireResponse
-            )
+        existing_response = (
+            db.query(LMSMenteeQuestionnaireResponse)
             .filter(
-                LMSMenteeQuestionnaireResponse.student_id ==
-                req.student_id,
-
-                LMSMenteeQuestionnaireResponse.schedule_id ==
-                req.schedule_id
+                LMSMenteeQuestionnaireResponse.student_id == req.student_id,
+                LMSMenteeQuestionnaireResponse.schedule_id == req.schedule_id
             )
             .first()
         )
 
-        if submitted:
-            return returnException(
-                "Questionnaire already submitted."
+        if existing_response:
+            # ==========================================================
+            # DELETE existing answers and options
+            # ==========================================================
+            
+            # Get all question response IDs for this response
+            question_responses = (
+                db.query(LMSMenteeQuestionnaireResponseQue)
+                .filter(
+                    LMSMenteeQuestionnaireResponseQue.questionnaire_response_id == 
+                    existing_response.questionnaire_response_id
+                )
+                .all()
             )
+            
+            # Delete option responses for each question response
+            for qr in question_responses:
+                db.query(LMSMenteeQuestionnaireResponseOption).filter(
+                    LMSMenteeQuestionnaireResponseOption.questionnaire_response_que_id == 
+                    qr.questionnaire_response_que_id
+                ).delete()
+            
+            # Delete question responses
+            db.query(LMSMenteeQuestionnaireResponseQue).filter(
+                LMSMenteeQuestionnaireResponseQue.questionnaire_response_id == 
+                existing_response.questionnaire_response_id
+            ).delete()
+            
+            # Update the existing response header
+            existing_response.modified_by = req.student_id
+            existing_response.modified_date = datetime.now()
+            
+            response_id = existing_response.questionnaire_response_id
+            
+        else:
+            # ==========================================================
+            # Create NEW Questionnaire Response Header
+            # ==========================================================
+            response = LMSMenteeQuestionnaireResponse(
+                student_id=req.student_id,
+                schedule_id=req.schedule_id,
+                questionnaire_id=schedule.questionnaire_id,
+                sub_group_date_id=req.sub_group_date_id,
+                created_date=datetime.now(),
+                created_by=req.student_id,
+                modified_by=req.student_id
+            )
+            db.add(response)
+            db.flush()
+            response_id = response.questionnaire_response_id
 
         # ==========================================================
         # Validate Every Question
@@ -709,34 +750,6 @@ def save_questionnaire_response(
                         )
 
         # ==========================================================
-        # Save Questionnaire Response Header
-        # ==========================================================
-
-        response = LMSMenteeQuestionnaireResponse(
-
-            student_id=req.student_id,
-
-            schedule_id=req.schedule_id,
-
-            questionnaire_id=schedule.questionnaire_id,
-
-            sub_group_date_id=req.sub_group_date_id,
-
-            created_date=datetime.now(),
-
-            created_by=req.student_id,
-
-            modified_by=req.student_id
-
-        )
-
-        db.add(response)
-
-        db.flush()
-
-        response_id = response.questionnaire_response_id
-
-                # ==========================================================
         # Save Question Answers
         # ==========================================================
 
