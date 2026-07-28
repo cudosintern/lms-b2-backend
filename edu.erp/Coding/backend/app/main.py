@@ -17,20 +17,18 @@ app.mount(
 )
 
 origins = [
-    "http://localhost:3000",  # React frontend URL
-    "http://10.91.0.213:3001",  # UAT React frontend URL
-]
-origins = [
-    # "http://localhost:3000",    # Your React Frontend
-    "http://localhost:8000",    # Your Swagger UI
-#     "http://127.0.0.1:8000",    # Alternative Backend URL
-#     "*"                         # Allow ALL (Use with caution in production)
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+    "http://127.0.0.1:3001",
+    "http://localhost:8000",
+    "http://127.0.0.1:8000",
 ]
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:3000"],
-    # allow_origins=["*"],
+    allow_origins=origins,
+    allow_origin_regex=r"http://.*",
     allow_credentials=True,
     allow_methods=["*"],  # Allow all HTTP methods
     allow_headers=["*"],  # Allow all headers

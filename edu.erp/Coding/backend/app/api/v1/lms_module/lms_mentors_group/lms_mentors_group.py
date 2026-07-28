@@ -281,12 +281,57 @@ def get_group_complete(
     "/delete_mentors_group/{mentors_group_id}"
 )
 def delete_mentors_group(
-    mentors_group_id: int
+    mentors_group_id: int,
+    db: Session = Depends(get_db)
 ):
+    try:
+        group = db.query(LMSMentorsGroup).filter(
+            LMSMentorsGroup.mentors_group_id == mentors_group_id
+        ).first()
 
-    return returnException(
-        "Group deletion not allowed"
-    )
+        if not group:
+            return returnException("Group not found")
+
+        terms = db.query(LMSMentorsGroupTerms).filter(
+            LMSMentorsGroupTerms.mentors_group_id == mentors_group_id
+        ).all()
+        term_ids = [t.mentors_group_terms_id for t in terms]
+
+        if term_ids:
+            group_mentors = db.query(LMSGroupMentors).filter(
+                LMSGroupMentors.mentors_group_terms_id.in_(term_ids)
+            ).all()
+            group_mentor_ids = [gm.group_mentor_id for gm in group_mentors]
+
+            if group_mentor_ids:
+                db.query(LMSGroupMentees).filter(
+                    LMSGroupMentees.group_mentor_id.in_(group_mentor_ids)
+                ).delete(synchronize_session=False)
+
+            db.query(LMSGroupMentees).filter(
+                LMSGroupMentees.mentors_group_terms_id.in_(term_ids)
+            ).delete(synchronize_session=False)
+
+            db.query(LMSGroupMentors).filter(
+                LMSGroupMentors.mentors_group_terms_id.in_(term_ids)
+            ).delete(synchronize_session=False)
+
+            db.query(LMSMentorsGroupTerms).filter(
+                LMSMentorsGroupTerms.mentors_group_id == mentors_group_id
+            ).delete(synchronize_session=False)
+
+        db.query(LMSMapMentor).filter(
+            LMSMapMentor.mentors_group_id == mentors_group_id
+        ).delete(synchronize_session=False)
+
+        db.delete(group)
+        db.commit()
+
+        return returnSuccess("Mentoring group deleted successfully.")
+
+    except Exception as e:
+        db.rollback()
+        return returnException(str(e))
 
 @router.post("/map_mentors")
 def map_mentors(
@@ -1259,7 +1304,7 @@ def get_config_types(
 
         config_types = (
             db.query(LMSConfigType)
-            .order_by(LMSConfigType.config_type_name)
+            .order_by(LMSConfigType.config_type)
             .all()
         )
 

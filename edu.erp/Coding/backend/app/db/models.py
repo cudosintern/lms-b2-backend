@@ -4295,6 +4295,7 @@ CudosBloomDomain = BloomDomain
 
 class CudosDeliveryMethod(Base):
     __tablename__ = 'cudos_delivery_method'
+    __table_args__ = {'extend_existing': True}
 
     delivery_mtd_id = Column(Integer, primary_key=True, autoincrement=True)
     delivery_mtd_name = Column(String(800), nullable=False)
