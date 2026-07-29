@@ -77,10 +77,10 @@ from app.api.v1.lms_module.lms_mmp_report.mmp_report import router as mmp_report
 
 from app.api.v1.lms_module.student_course_registration.student_course_registration import router as student_course_registration_router
 
-from app.api.v1.lms_module.config_type import router as config_type_router 
-from app.api.v1.lms_module.cross_department_mentor import router as cross_department_mentor_router
-from app.api.v1.lms_module.mentor_list import router as mentor_list_router
-from app.api.v1.lms_module.mentoring import router as mentoring_router
+from app.api.v1.lms_module.config_type.config_type import router as config_type_router 
+from app.api.v1.lms_module.cross_department_mentor.cross_department_mentor import router as cross_department_mentor_router
+from app.api.v1.lms_module.mentor_list.mentor_list import router as mentor_list_router
+from app.api.v1.lms_module.mentoring.mentoring import router as mentoring_router
 from app.api.v1.lms_module.student_details import router as student_details_router
 # from app.api.v1.lms_module.lms_student_course_registration.lms_student_course_registration import (
 #     router as lms_student_course_registration
@@ -89,6 +89,9 @@ from app.api.v1.lms_module.student_details import router as student_details_rout
 from app.api.v1.lms_module.lms_student_course_registration.lms_student_course_registration import (
     router as lms_student_course_registration_router
 )
+
+##All LMS Modules
+from app.api.v1.lms_module.material.material_routes import router as material_router
 
 router = APIRouter()
 
@@ -604,13 +607,7 @@ router.include_router(
     prefix="/api/v1/student-details",
     tags=["Student Details"]
 )
-#     lms_student_course_registration_router,
-#     prefix="/lms_student_course_registration",
-#     tags=["Student Course Registration"]
-# )
 
-# router.include_router(
-#     mmp_report_router,
-#     prefix="/mmp-report",
-#     tags=["MMP Report"]
-# )
+router.include_router(lms_student_course_registration_router, prefix="/lms_student_course_registration",  tags=["Course Registration"])
+
+router.include_router(material_router, prefix="/material", tags=["Material"])

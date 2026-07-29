@@ -7077,22 +7077,15 @@ class LMSConfigType(Base):
         default=func.now()
     )
 
-    # modify_date = Column(
     modified_date = Column(
         DateTime,
         default=func.now(),
         onupdate=func.now()
     )
-
-    org_id = Column(
-        Integer,
-        nullable=True
-    )
-
-    status = Column(
-        Integer,
-        default=1
-    )
+    # status = Column(
+    #     Integer,
+    #     default=1
+    # )
 
 class CudosCrclmComponent(Base):
     __tablename__ = "cudos_crclm_component"
@@ -7302,3 +7295,30 @@ class CudosMapCoursetoStudent(Base):
         "IEMSUsers",
         foreign_keys=[modified_by]
     )
+
+
+class LMSCourseMaterialUpload(Base):
+    __tablename__ = "lms_crs_material_upload"
+
+    mat_id = Column(Integer, primary_key=True, index=True)
+    document_name = Column(String(1000))
+    file_name = Column(String(1000))
+    docment_url = Column(Text)
+    description = Column(Text)
+    academic_batch_id = Column(Integer)
+    semester_id = Column(Integer)
+    crs_id = Column(Integer)
+    section_ids = Column(String(1000))
+    topic_ids = Column(String(1000))
+    created_by = Column(Integer)
+    update_cnt = Column(Integer,default=0)
+
+class LMSMapShareMaterialsToStudent(Base):
+    __tablename__ = "lms_map_share_materials_to_student"
+
+    material_student_map_id = Column(Integer, primary_key=True, autoincrement=True)
+    ssd_id = Column(Integer)
+    mat_id = Column(Integer)
+    academic_batch_id = Column(Integer)
+    section_id = Column(Integer)
+    student_usn = Column(String(20))

@@ -6,8 +6,7 @@ from app.core.database import get_db, engine
 from app.db.models import LMSConfigType, Base
 from app.utils.auth_helper import get_current_user
 from app.utils.http_return_helper import returnException, returnSuccess
-
-from .config_type_schema import app_configs, UpdateConfigType
+from app.api.v1.lms_module.config_type.config_type_schema import *
 
 try:
     LMSConfigType.__table__.create(bind=engine, checkfirst=True)
@@ -27,19 +26,19 @@ print("CONFIG TYPE LOADED")
 @router.get("/list")
 def list_config_type(
     current_user: dict = Depends(get_current_user),
-    org_id: int = Header(...),
+    # org_id: int = Header(...),
     db: Session = Depends(get_db),
 ):
     records = (
         db.query(LMSConfigType)
-        .filter(LMSConfigType.org_id == org_id, LMSConfigType.status == 1)
+        # .filter(LMSConfigType.org_id == org_id, LMSConfigType.status == 1)
         .order_by(LMSConfigType.config_type_id)
         .all()
     )
     data = [
         {
-            "id": r.config_type_id,
-            "config_type": r.config_type,
+            "config_type_id": r.config_type_id,
+            "config_type_name": r.config_type_name,
             "min_mentees": r.min_mentees,
             "max_mentees": r.max_mentees,
         }
@@ -56,7 +55,7 @@ def list_config_type(
 def save_config_type(
     payload: app_configs,
     current_user: dict = Depends(get_current_user),
-    org_id: int = Header(...),
+    # org_id: int = Header(...),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.get("user_id")
@@ -73,8 +72,8 @@ def save_config_type(
             db.query(LMSConfigType)
             .filter(
                 LMSConfigType.config_type_id == payload.config_type_id,
-                LMSConfigType.org_id == org_id,
-                LMSConfigType.status == 1,
+                # LMSConfigType.org_id == org_id,
+                # LMSConfigType.status == 1,
             )
             .first()
         )
@@ -85,9 +84,9 @@ def save_config_type(
         duplicate = (
             db.query(LMSConfigType)
             .filter(
-                LMSConfigType.org_id == org_id,
-                LMSConfigType.config_type == payload.config_type.strip(),
-                LMSConfigType.status == 1,
+                # LMSConfigType.org_id == org_id,
+                LMSConfigType.config_type_name == payload.config_type_name.strip(),
+                # LMSConfigType.status == 1,
                 LMSConfigType.config_type_id != payload.config_type_id,
             )
             .first()
@@ -95,17 +94,17 @@ def save_config_type(
         if duplicate:
             return returnException("Configuration type name already exists.")
 
-        record.config_type = payload.config_type.strip()
+        record.config_type_name = payload.config_type_name.strip()
         record.min_mentees = payload.min_mentees
         record.max_mentees = payload.max_mentees
         record.modified_by = user_id
-        record.modify_date = datetime.now()
+        record.modified_date = datetime.now()
         db.commit()
         db.refresh(record)
         return returnSuccess(
             {
-                "id": record.config_type_id,
-                "config_type": record.config_type,
+                "config_type_id": record.config_type_id,
+                "config_type_name": record.config_type_name,
                 "min_mentees": record.min_mentees,
                 "max_mentees": record.max_mentees,
             },
@@ -116,9 +115,9 @@ def save_config_type(
     duplicate = (
         db.query(LMSConfigType)
         .filter(
-            LMSConfigType.org_id == org_id,
-            LMSConfigType.config_type == payload.config_type.strip(),
-            LMSConfigType.status == 1,
+            # LMSConfigType.org_id == org_id,
+            LMSConfigType.config_type_name == payload.config_type_name.strip(),
+            # LMSConfigType.status == 1,
         )
         .first()
     )
@@ -126,21 +125,21 @@ def save_config_type(
         return returnException("Configuration type name already exists.")
 
     new_record = LMSConfigType(
-        config_type=payload.config_type.strip(),
+        config_type_name=payload.config_type_name.strip(),
         min_mentees=payload.min_mentees,
         max_mentees=payload.max_mentees,
-        org_id=org_id,
-        status=1,
+        # org_id=org_id,
+        # status=1,
         created_by=user_id,
-        create_date=datetime.now(),
+        created_date=datetime.now(),
     )
     db.add(new_record)
     db.commit()
     db.refresh(new_record)
     return returnSuccess(
         {
-            "id": new_record.config_type_id,
-            "config_type": new_record.config_type,
+            "config_type_id": new_record.config_type_id,
+            "config_type_name": new_record.config_type_name,
             "min_mentees": new_record.min_mentees,
             "max_mentees": new_record.max_mentees,
         },
@@ -152,12 +151,12 @@ def save_config_type(
 # PUT /update/{id} – update an existing config type
 # ---------------------------------------------------------------------------
 
-@router.put("/update/{id}")
+@router.put("/update/{config_type_id}")
 def update_config_type(
-    id: int,
+    config_type_id: int,
     payload: UpdateConfigType,
     current_user: dict = Depends(get_current_user),
-    org_id: int = Header(...),
+    # org_id: int = Header(...),
     db: Session = Depends(get_db),
 ):
     user_id = current_user.get("user_id")
@@ -172,9 +171,7 @@ def update_config_type(
     record = (
         db.query(LMSConfigType)
         .filter(
-            LMSConfigType.config_type_id == id,
-            LMSConfigType.org_id == org_id,
-            LMSConfigType.status == 1,
+            LMSConfigType.config_type_id == config_type_id,
         )
         .first()
     )
@@ -185,27 +182,25 @@ def update_config_type(
     duplicate = (
         db.query(LMSConfigType)
         .filter(
-            LMSConfigType.org_id == org_id,
-            LMSConfigType.config_type == payload.config_type.strip(),
-            LMSConfigType.status == 1,
-            LMSConfigType.config_type_id != id,
+            LMSConfigType.config_type_name == payload.config_type_name.strip(),
+            LMSConfigType.config_type_id != config_type_id,
         )
         .first()
     )
     if duplicate:
         return returnException("Configuration type name already exists.")
 
-    record.config_type = payload.config_type.strip()
+    record.config_type_name = payload.config_type_name.strip()
     record.min_mentees = payload.min_mentees
     record.max_mentees = payload.max_mentees
     record.modified_by = user_id
-    record.modify_date = datetime.now()
+    record.modified_date = datetime.now()
     db.commit()
     db.refresh(record)
     return returnSuccess(
         {
-            "id": record.config_type_id,
-            "config_type": record.config_type,
+            "config_type_id": record.config_type_id,
+            "config_type_name": record.config_type_name,
             "min_mentees": record.min_mentees,
             "max_mentees": record.max_mentees,
         },
@@ -221,24 +216,21 @@ def update_config_type(
 def delete_config_type(
     id: int,
     current_user: dict = Depends(get_current_user),
-    org_id: int = Header(...),
     db: Session = Depends(get_db),
 ):
-    user_id = current_user.get("user_id")
     record = (
         db.query(LMSConfigType)
-        .filter(
-            LMSConfigType.config_type_id == id,
-            LMSConfigType.org_id == org_id,
-            LMSConfigType.status == 1,
-        )
+        .filter(LMSConfigType.config_type_id == id)
         .first()
     )
+
     if not record:
         return returnException("Configuration type not found.")
 
-    record.status = 0
-    record.modified_by = user_id
-    record.modify_date = datetime.now()
+    db.delete(record)
     db.commit()
-    return returnSuccess({"id": id}, "Configuration type deleted successfully.")
+
+    return returnSuccess(
+        {"id": id},
+        "Configuration type deleted successfully."
+    )
