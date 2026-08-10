@@ -7322,3 +7322,98 @@ class LMSMapShareMaterialsToStudent(Base):
     academic_batch_id = Column(Integer)
     section_id = Column(Integer)
     student_usn = Column(String(20))
+
+# REVIEW: TOPIC-INSTRUCTOR MAPPING - Core LMS table
+# Links topic → instructor → section (many-to-many with extras)
+# TODO: Composite unique constraint: (crs_id, section_id, topic_id)?
+class LMSMapInstructorTopic(Base):
+    __tablename__ = 'lms_map_instructor_topic'
+
+    inst_map_id = Column(Integer, primary_key=True, autoincrement=True)  # REVIEW: Auto-increment PK
+    
+    # REVIEW: FKs missing explicit constraints/cascade rules
+    academic_batch_id = Column(Integer, nullable=False)  # Context filter
+    semester_id = Column(Integer, nullable=False)
+    crs_id = Column(Integer, nullable=False)  # Course context → iems_courses.crs_id
+    section_id = Column(Integer, nullable=False)  # REVIEW: FK → iems_section.id
+    topic_id = Column(Integer, nullable=False)  # REVIEW: FK → cudos_topic.topic_id  
+    instructor_id = Column(Integer, nullable=True)  # REVIEW: FK → iems_users.id (nullable=unassigned)
+    
+    created_by = Column(Integer, nullable=True)  # REVIEW: FK → iems_users.id
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(DateTime, nullable=True)
+    modified_date = Column(DateTime, nullable=True)
+
+    # TODO: Indexes: (crs_id, section_id, topic_id), (instructor_id), (academic_batch_id, semester_id)
+    # PERF: Query patterns suggest need for these composite indexes
+
+
+# Topic Lesson Schedule Model
+# REVIEW: LESSON SCHEDULE - Topic delivery tracking
+# Tracks planned vs actual delivery dates per topic
+# Links to LMSMapInstructorTopic via topic_id
+class TopicLessonSchedule(Base):
+    __tablename__ = 'topic_lesson_schedule'
+
+    lesson_schedule_id = Column(Integer, primary_key=True, autoincrement=True)
+    topic_id = Column(Integer, nullable=False)  # REVIEW: FK → cudos_topic.topic_id (or LMS mapping?)
+    academic_batch_id = Column(Integer, nullable=False)  # Added to fix 500 error
+    course_id = Column(Integer, nullable=False)  # Added to fix missing default error
+    portion_per_hour = Column(Float, nullable=True)  # NEW: Calculated field
+    conduction_date = Column(Date, nullable=True)  # Planned
+    actual_delivery_date = Column(Date, nullable=True)  # Actual
+    instructor_id = Column(Integer, nullable=True)  # NEW: For persisting assignment without mapping
+    section_id = Column(Integer, nullable=True)     # NEW: For section-specific assignment persistence
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(DateTime, nullable=True)
+    modified_date = Column(DateTime, nullable=True)
+
+    # TODO: Index on topic_id, conduction_date for scheduling queries
+    # PERF: Add instructor_id if frequent cross-joins needed
+
+
+# LMS Map Portion LS Model
+class LMSMapPortionLS(Base):
+    __tablename__ = 'lms_map_portion_ls'
+
+    portion_id = Column('mtp_id', Integer, primary_key=True, autoincrement=True)
+    topic_id = Column(Integer, nullable=False)
+    section_id = Column(Integer, nullable=True)
+    lesson_schedule_id = Column(Integer, nullable=True)
+    portion_ref = Column(String(500), nullable=True)
+    portion_per_hour = Column(Text, nullable=False)
+    planned_date = Column(Date, nullable=True)
+    delivery_date = Column(Date, nullable=True)
+    start_time = Column(Time, nullable=True)
+    end_time = Column(Time, nullable=True)
+    status = Column(Integer, default=0, nullable=False)
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(DateTime, nullable=True)
+    modified_date = Column(DateTime, nullable=True)
+
+class LMSLessonSchedule(Base):
+    __tablename__ = 'lms_lesson_schedule'
+
+    lls_id = Column(Integer, primary_key=True, autoincrement=True)
+    
+    # Fields from Version B (Planning)
+    academic_batch_id = Column(Integer, nullable=True)
+    semester_id = Column(Integer, nullable=True)
+    crs_id = Column(Integer, nullable=True)
+    section_id = Column(Integer, nullable=True)
+    plan_date = Column(Date, nullable=True)
+    start_time = Column(String(45), nullable=True)
+    end_time = Column(String(45), nullable=True)
+    status = Column(Integer, default=0)
+
+    # Fields from Version A (Actual Execution)
+    # conduction_date = Column(Date, nullable=True)
+    # actual_delivery_date = Column(Date, nullable=True)
+
+    # Combined Audit Fields
+    created_by = Column(Integer, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    created_date = Column(DateTime, nullable=True)
+    modified_date = Column(DateTime, nullable=True)
