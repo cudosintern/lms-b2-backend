@@ -92,6 +92,7 @@ from app.api.v1.lms_module.lms_student_course_registration.lms_student_course_re
 
 ##All LMS Modules
 from app.api.v1.lms_module.material.material_routes import router as material_router
+from app.api.v1.lms_module.topic_management.topic_routes import router as topic_router
 
 router = APIRouter()
 
@@ -611,3 +612,5 @@ router.include_router(
 router.include_router(lms_student_course_registration_router, prefix="/lms_student_course_registration",  tags=["Course Registration"])
 
 router.include_router(material_router, prefix="/material", tags=["Material"])
+
+router.include_router(topic_router, prefix="/topic_management")

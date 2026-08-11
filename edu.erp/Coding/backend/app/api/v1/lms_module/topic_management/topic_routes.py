@@ -26,7 +26,9 @@ from app.db.models import (
     LMSMapPortionLS,
     IEMSUsers,
     LMSLessonSchedule,  # Added for section filtering
-    CudosMapCourseToCourseInstructor  # Added back for the Instructor/Handled By column
+    CudosMapCoursetoCourseInstructor,  # Added back for the Instructor/Handled By column
+    MasterTypeDetails,
+    MasterType
 )
 # Using only your pre-existing schemas
 from .topic_schema import (
@@ -128,67 +130,174 @@ def get_course_list(request: CourseListRequest, db: Session = Depends(get_db)):
         print(f"ERROR in course_list: {e}")
         return error_response(str(e))
 
-
-@router.post("/section_list_post")
+@router.post("/section_list")
 def get_section_list(
     course_id: Optional[int] = Body(None),
     semester_id: Optional[int] = Body(None),
     academic_batch_id: Optional[int] = Body(None),
-    db: Session = Depends(get_db)
+    db: Session = Depends(get_db),
 ):
-    """Get sections strictly from the allowed IEMSection table (No extra BaseModel required)"""
     try:
-        query = db.query(IEMSection)
+        print("\n========== SECTION LIST API ==========")
+        print("course_id:", course_id)
+        print("semester_id:", semester_id)
+        print("academic_batch_id:", academic_batch_id)
 
-        if academic_batch_id:
-            query = query.filter(IEMSection.academic_batch_id == academic_batch_id)
-        if semester_id:
-            query = query.filter(IEMSection.semester_id == semester_id)
+        # ---------------------------------------------------------
+        # Validate required parameters
+        # ---------------------------------------------------------
+        if course_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="course_id is required",
+            )
 
-        sections = query.all()
+        if semester_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="semester_id is required",
+            )
 
-        if sections:
-            return [
-                {
-                    "value": s.id,
-                    "label": s.section or f"Section {s.id}",
-                }
-                for s in sections
-            ]
+        if academic_batch_id is None:
+            raise HTTPException(
+                status_code=400,
+                detail="academic_batch_id is required",
+            )
 
-        # Fallback: return default sections and add them to IEMSection if they don't exist
-        default_sections = ["A", "B", "C", "D"]
-        result = []
-        for section_name in default_sections:
-            existing_section = db.query(IEMSection).filter(
-                IEMSection.section == section_name
-            ).first()
+        # ---------------------------------------------------------
+        # Fetch sections mapped to:
+        # academic_batch + semester + course
+        #
+        # cudos_map_courseto_course_instructor.section_id
+        # references
+        # cudos_master_type_details.mt_details_id
+        # ---------------------------------------------------------
+        sections = (
+            db.query(
+                CudosMapCoursetoCourseInstructor.section_id,
+                MasterTypeDetails.mt_details_name,
+            )
+            .join(
+                MasterTypeDetails,
+                MasterTypeDetails.mt_details_id
+                == CudosMapCoursetoCourseInstructor.section_id,
+            )
+            .filter(
+                CudosMapCoursetoCourseInstructor.academic_batch_id
+                == academic_batch_id
+            )
+            .filter(
+                CudosMapCoursetoCourseInstructor.semester_id
+                == semester_id
+            )
+            .filter(
+                CudosMapCoursetoCourseInstructor.crs_id
+                == course_id
+            )
+            .filter(
+                CudosMapCoursetoCourseInstructor.section_id.isnot(None)
+            )
+            .distinct()
+            .order_by(
+                MasterTypeDetails.mt_details_name
+            )
+            .all()
+        )
 
-            if existing_section:
-                result.append({
-                    "value": existing_section.id,
-                    "label": existing_section.section
-                })
-            else:
-                new_section = IEMSection(
-                    section=section_name,
-                    academic_batch_id=academic_batch_id,
-                    semester_id=semester_id,
-                    status=1
-                )
-                db.add(new_section)
-                db.flush()
-                result.append({
-                    "value": new_section.id,
-                    "label": section_name
-                })
+        print("Sections found:", len(sections))
 
-        db.commit()
+        # ---------------------------------------------------------
+        # Build response
+        # ---------------------------------------------------------
+        result = [
+            {
+                "value": section_id,
+                "label": section_name,
+            }
+            for section_id, section_name in sections
+        ]
+
+        print("Section result:", result)
+        print("=====================================\n")
+
         return result
 
+    except HTTPException:
+        raise
+
     except Exception as e:
-        db.rollback()
-        raise HTTPException(status_code=500, detail=str(e))
+        import traceback
+
+        print("\n========== SECTION LIST ERROR ==========")
+        print("Exception:", repr(e))
+        traceback.print_exc()
+        print("========================================\n")
+
+        raise HTTPException(
+            status_code=500,
+            detail=str(e),
+        )
+
+# @router.post("/section_list")
+# def get_section_list(
+#     course_id: Optional[int] = Body(None),
+#     semester_id: Optional[int] = Body(None),
+#     academic_batch_id: Optional[int] = Body(None),
+#     db: Session = Depends(get_db)
+# ):
+#     """Get sections strictly from the allowed IEMSection table (No extra BaseModel required)"""
+#     try:
+#         query = db.query(IEMSection)
+
+#         if academic_batch_id:
+#             query = query.filter(IEMSection.academic_batch_id == academic_batch_id)
+#         if semester_id:
+#             query = query.filter(IEMSection.semester_id == semester_id)
+
+#         sections = query.all()
+
+#         if sections:
+#             return [
+#                 {
+#                     "value": s.id,
+#                     "label": s.section or f"Section {s.id}",
+#                 }
+#                 for s in sections
+#             ]
+
+#         # Fallback: return default sections and add them to IEMSection if they don't exist
+#         default_sections = ["A", "B", "C", "D"]
+#         result = []
+#         for section_name in default_sections:
+#             existing_section = db.query(IEMSection).filter(
+#                 IEMSection.section == section_name
+#             ).first()
+
+#             if existing_section:
+#                 result.append({
+#                     "value": existing_section.id,
+#                     "label": existing_section.section
+#                 })
+#             else:
+#                 new_section = IEMSection(
+#                     section=section_name,
+#                     academic_batch_id=academic_batch_id,
+#                     semester_id=semester_id,
+#                     status=1
+#                 )
+#                 db.add(new_section)
+#                 db.flush()
+#                 result.append({
+#                     "value": new_section.id,
+#                     "label": section_name
+#                 })
+
+#         db.commit()
+#         return result
+
+#     except Exception as e:
+#         db.rollback()
+#         raise HTTPException(status_code=500, detail=str(e))
 
 
 
@@ -612,14 +721,14 @@ def delete_topic(topic_id: int, db: Session = Depends(get_db)):
 @router.get("/instructor_list")
 def instructor_list(db: Session = Depends(get_db)):
     try:
-        # First try to get instructors from CudosMapCourseToCourseInstructor with DISTINCT
+        # First try to get instructors from CudosMapCoursetoCourseInstructor with DISTINCT
         instructors = db.query(
-            CudosMapCourseToCourseInstructor.course_instructor_id,
+            CudosMapCoursetoCourseInstructor.course_instructor_id,
             IEMSUsers.first_name,
             IEMSUsers.last_name
         ).join(
             IEMSUsers,
-            IEMSUsers.id == CudosMapCourseToCourseInstructor.course_instructor_id
+            IEMSUsers.id == CudosMapCoursetoCourseInstructor.course_instructor_id
         ).distinct().all()
 
         # If no instructors found, fallback to all users from IEMSUsers
