@@ -6,8 +6,8 @@ from pydantic import BaseModel, Field
 from sqlalchemy import bindparam, text
 from sqlalchemy.orm import Session
 
-from ...core.database import get_db
-from ...utils.http_return_helper import returnException, returnSuccess
+from app.core.database import get_db
+from app.utils.http_return_helper import returnException, returnSuccess
 
 router = APIRouter(prefix="/schedule-class", tags=["Schedule Class"])
 

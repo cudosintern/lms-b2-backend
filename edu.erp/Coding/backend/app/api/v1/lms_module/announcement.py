@@ -5,9 +5,9 @@ from datetime import datetime, timezone
 from typing import Literal, Optional
 from pydantic import BaseModel, Field
 
-from ...core.database import get_db
-from ...utils.http_return_helper import returnSuccess, returnException
-from ...db.models import (
+from app.core.database import get_db
+from app.utils.http_return_helper import returnSuccess, returnException
+from app.db.models import (
     Announcement,
     StudentNotificationMap,
     IEMSDepartment,

@@ -41,6 +41,7 @@ from .topic_schema import (
     AddScheduleRequest
 )
 
+
 router = APIRouter(
     tags=["Topic Management"]
 )
@@ -83,9 +84,20 @@ def get_curriculum_list_post(db: Session = Depends(get_db)):
 
 
 @router.post("/semester_list")
-def get_semester_list_post(db: Session = Depends(get_db)):
+def get_semester_list_post(
+    request: dict = Body(...),  # Changed from empty Body() to accept request body
+    db: Session = Depends(get_db)
+):
+    """Get semesters - filter by academic_batch_id if provided"""
     try:
-        data = db.query(IEMSemester).all()
+        query = db.query(IEMSemester)
+        
+        # Filter by academic_batch_id if provided in request body
+        academic_batch_id = request.get('academic_batch_id')
+        if academic_batch_id:
+            query = query.filter(IEMSemester.academic_batch_id == academic_batch_id)
+        
+        data = query.all()
         result = [
             {
                 "value": row.semester_id,
@@ -99,16 +111,58 @@ def get_semester_list_post(db: Session = Depends(get_db)):
         return error_response(str(e))
 
 
+# @router.post("/course_list")
+# def get_course_list(request: CourseListRequest, db: Session = Depends(get_db)):
+#     """Get all courses - returns courses for selected curriculum"""
+#     try:
+#         query = db.query(IEMSCourses)
+        
+#         # Filter by curriculum only
+#         if request.curriculum_id:
+#             query = query.filter(IEMSCourses.academic_batch_id == request.curriculum_id)
+        
+#         courses = query.all()
+        
+#         if not courses:
+#             return success_response([])
+            
+#         result = [
+#             {
+#                 "value": row.crs_id,
+#                 "label": row.crs_title or f"Course {row.crs_id}",
+#                 "crs_id": row.crs_id,
+#                 "crs_code": row.crs_code,
+#                 "crs_title": row.crs_title,
+#                 "semester": row.semester,
+#             }
+#             for row in courses
+#         ]
+#         return success_response(result)
+#     except Exception as e:
+#         print(f"ERROR in course_list: {e}")
+#         return error_response(str(e))
+
 @router.post("/course_list")
-def get_course_list(request: CourseListRequest, db: Session = Depends(get_db)):
-    """Get all courses - returns courses for selected curriculum"""
+def get_course_list(
+    request: dict = Body(...),  # Changed from CourseListRequest to dict for flexibility
+    db: Session = Depends(get_db)
+):
+    """Get courses - filter by academic_batch_id and semester_id"""
     try:
         query = db.query(IEMSCourses)
         
-        # Filter by curriculum only
-        if request.curriculum_id:
-            query = query.filter(IEMSCourses.academic_batch_id == request.curriculum_id)
+        # Get filters from request body
+        academic_batch_id = request.get('academic_batch_id') or request.get('curriculum_id')
+        semester_id = request.get('semester_id')
         
+        # Apply filters
+        if academic_batch_id:
+            query = query.filter(IEMSCourses.academic_batch_id == academic_batch_id)
+        
+        if semester_id:
+            query = query.filter(IEMSCourses.semester == semester_id)
+        
+        # If no filters provided, return all courses (or empty based on requirement)
         courses = query.all()
         
         if not courses:
@@ -122,6 +176,7 @@ def get_course_list(request: CourseListRequest, db: Session = Depends(get_db)):
                 "crs_code": row.crs_code,
                 "crs_title": row.crs_title,
                 "semester": row.semester,
+                "academic_batch_id": row.academic_batch_id,
             }
             for row in courses
         ]
@@ -143,35 +198,29 @@ def get_section_list(
         print("semester_id:", semester_id)
         print("academic_batch_id:", academic_batch_id)
 
-        # ---------------------------------------------------------
         # Validate required parameters
-        # ---------------------------------------------------------
         if course_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="course_id is required",
-            )
+            return {
+                "success": False,
+                "message": "course_id is required",
+                "data": []
+            }
 
         if semester_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="semester_id is required",
-            )
+            return {
+                "success": False,
+                "message": "semester_id is required",
+                "data": []
+            }
 
         if academic_batch_id is None:
-            raise HTTPException(
-                status_code=400,
-                detail="academic_batch_id is required",
-            )
+            return {
+                "success": False,
+                "message": "academic_batch_id is required",
+                "data": []
+            }
 
-        # ---------------------------------------------------------
-        # Fetch sections mapped to:
-        # academic_batch + semester + course
-        #
-        # cudos_map_courseto_course_instructor.section_id
-        # references
-        # cudos_master_type_details.mt_details_id
-        # ---------------------------------------------------------
+        # Fetch sections
         sections = (
             db.query(
                 CudosMapCoursetoCourseInstructor.section_id,
@@ -206,9 +255,7 @@ def get_section_list(
 
         print("Sections found:", len(sections))
 
-        # ---------------------------------------------------------
-        # Build response
-        # ---------------------------------------------------------
+        # Build response with consistent format
         result = [
             {
                 "value": section_id,
@@ -220,10 +267,19 @@ def get_section_list(
         print("Section result:", result)
         print("=====================================\n")
 
-        return result
+        # Return in same format as other endpoints
+        return {
+            "success": True,
+            "message": "Sections fetched successfully",
+            "data": result
+        }
 
-    except HTTPException:
-        raise
+    except HTTPException as e:
+        return {
+            "success": False,
+            "message": str(e.detail),
+            "data": []
+        }
 
     except Exception as e:
         import traceback
@@ -233,74 +289,61 @@ def get_section_list(
         traceback.print_exc()
         print("========================================\n")
 
-        raise HTTPException(
-            status_code=500,
-            detail=str(e),
+        return {
+            "success": False,
+            "message": str(e),
+            "data": []
+        }
+
+# -----------------------------
+# GET CUDOS TOPICS (Not yet imported)
+# -----------------------------
+@router.post("/cudos_topics")
+def get_cudos_topics(
+    academic_batch_id: int = Body(...),  # ← ADD THIS
+    course_id: int = Body(...),
+    semester_id: int = Body(...),
+    section_id: int = Body(...),
+    db: Session = Depends(get_db)
+):
+    """Get topics from cudos_topic that are NOT yet imported for this course/section"""
+    try:
+        # Get all topic IDs already imported for this course and section
+        imported_topic_ids = db.query(LMSMapInstructorTopic.topic_id).filter(
+            LMSMapInstructorTopic.crs_id == course_id,
+            LMSMapInstructorTopic.section_id == section_id,
+            LMSMapInstructorTopic.academic_batch_id == academic_batch_id  # ← ADD THIS
+        ).all()
+        
+        imported_ids = [t.topic_id for t in imported_topic_ids]
+        
+        # Get topics from cudos_topic that are NOT imported
+        query = db.query(CudosTopic).filter(
+            CudosTopic.course_id == course_id,
+            CudosTopic.semester_id == semester_id,
+            CudosTopic.academic_batch_id == academic_batch_id  # ← ADD THIS
         )
-
-# @router.post("/section_list")
-# def get_section_list(
-#     course_id: Optional[int] = Body(None),
-#     semester_id: Optional[int] = Body(None),
-#     academic_batch_id: Optional[int] = Body(None),
-#     db: Session = Depends(get_db)
-# ):
-#     """Get sections strictly from the allowed IEMSection table (No extra BaseModel required)"""
-#     try:
-#         query = db.query(IEMSection)
-
-#         if academic_batch_id:
-#             query = query.filter(IEMSection.academic_batch_id == academic_batch_id)
-#         if semester_id:
-#             query = query.filter(IEMSection.semester_id == semester_id)
-
-#         sections = query.all()
-
-#         if sections:
-#             return [
-#                 {
-#                     "value": s.id,
-#                     "label": s.section or f"Section {s.id}",
-#                 }
-#                 for s in sections
-#             ]
-
-#         # Fallback: return default sections and add them to IEMSection if they don't exist
-#         default_sections = ["A", "B", "C", "D"]
-#         result = []
-#         for section_name in default_sections:
-#             existing_section = db.query(IEMSection).filter(
-#                 IEMSection.section == section_name
-#             ).first()
-
-#             if existing_section:
-#                 result.append({
-#                     "value": existing_section.id,
-#                     "label": existing_section.section
-#                 })
-#             else:
-#                 new_section = IEMSection(
-#                     section=section_name,
-#                     academic_batch_id=academic_batch_id,
-#                     semester_id=semester_id,
-#                     status=1
-#                 )
-#                 db.add(new_section)
-#                 db.flush()
-#                 result.append({
-#                     "value": new_section.id,
-#                     "label": section_name
-#                 })
-
-#         db.commit()
-#         return result
-
-#     except Exception as e:
-#         db.rollback()
-#         raise HTTPException(status_code=500, detail=str(e))
-
-
-
+        
+        if imported_ids:
+            query = query.filter(~CudosTopic.topic_id.in_(imported_ids))
+        
+        topics = query.all()
+        
+        return [
+            {
+                "topic_id": t.topic_id,
+                "topic_code": t.topic_code,
+                "topic_title": t.topic_title,
+                "topic_hrs": t.topic_hrs,
+                "num_of_sessions": t.num_of_sessions,
+                "is_imported": False
+            }
+            for t in topics
+        ]
+    except Exception as e:
+        print(f"DEBUG: Error in cudos_topics: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+    
 # =========================================================
 # ✅ IMPORT & LISTING
 # =========================================================

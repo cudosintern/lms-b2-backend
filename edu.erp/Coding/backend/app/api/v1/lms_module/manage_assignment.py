@@ -7,8 +7,8 @@ import os
 from datetime import datetime
 from typing import Optional, Literal
 
-from ...core.database import get_db
-from ...utils.http_return_helper import returnSuccess, returnException
+from app.core.database import get_db
+from app.utils.http_return_helper import returnSuccess, returnException
 
 router = APIRouter(prefix="/assignment", tags=["Manage Assignment"])
 
