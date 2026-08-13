@@ -9,6 +9,22 @@ from sqlalchemy.orm import Session
 from app.core.database import get_db
 from app.utils.http_return_helper import returnException, returnSuccess
 
+from app.db.models import (
+    IEMSCourses,
+    IEMSection,
+    CudosTopic,
+    IEMSAcademicBatch,
+    IEMSemester,
+    LMSMapInstructorTopic,
+    TopicLessonSchedule,
+    LMSMapPortionLS,
+    IEMSUsers,
+    LMSLessonSchedule,  # Added for section filtering
+    CudosMapCoursetoCourseInstructor,  # Added back for the Instructor/Handled By column
+    MasterTypeDetails,
+    MasterType
+)
+
 router = APIRouter(tags=["Manage Quiz"])
 
 
@@ -284,7 +300,7 @@ def get_quiz_curriculums(db: Session = Depends(get_db)):
             """
             SELECT academic_batch_id, academic_batch_code, academic_batch_desc, academic_year, regulation_year
             FROM iems_academic_batch
-            ORDER BY academic_batch_id DESC
+            ORDER BY academic_batch_code ASC
             """
         )
     ).mappings().all()
@@ -295,7 +311,7 @@ def get_quiz_curriculums(db: Session = Depends(get_db)):
 @router.get("/meta/terms")
 def get_quiz_terms(academic_batch_id: Optional[int] = Query(default=None), db: Session = Depends(get_db)):
     query = """
-        SELECT semester_id, semester, semester_desc, academic_batch_id
+        SELECT semester_id, semester, academic_batch_id
         FROM iems_semester
         WHERE 1=1
     """
@@ -303,7 +319,7 @@ def get_quiz_terms(academic_batch_id: Optional[int] = Query(default=None), db: S
     if academic_batch_id is not None:
         query += " AND academic_batch_id = :academic_batch_id"
         params["academic_batch_id"] = academic_batch_id
-    query += " ORDER BY semester_id DESC"
+    query += " ORDER BY semester_id ASC"
     rows = db.execute(text(query), params).mappings().all()
     return returnSuccess(rows)
 
@@ -337,23 +353,68 @@ def get_quiz_courses(
 def get_quiz_sections(
     academic_batch_id: Optional[int] = Query(default=None),
     semester_id: Optional[int] = Query(default=None),
+    course_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    query = """
-        SELECT id AS section_id, section, academic_batch_id, semester_id
-        FROM iems_section
-        WHERE 1=1
-    """
-    params: dict[str, Any] = {}
-    if academic_batch_id is not None:
-        query += " AND academic_batch_id = :academic_batch_id"
-        params["academic_batch_id"] = academic_batch_id
-    if semester_id is not None:
-        query += " AND semester_id = :semester_id"
-        params["semester_id"] = semester_id
-    query += " ORDER BY id DESC"
-    rows = db.execute(text(query), params).mappings().all()
-    return returnSuccess(rows)
+    try:
+        # Validate required parameters
+        if None in [academic_batch_id, semester_id, course_id]:
+            return {
+                "success": False,
+                "message": "academic_batch_id, semester_id, and course_id are required",
+                "data": []
+            }
+
+        # Fetch sections from cudos_map_courseto_course_instructor
+        sections = (
+            db.query(
+                CudosMapCoursetoCourseInstructor.section_id,
+                MasterTypeDetails.mt_details_name,
+            )
+            .join(
+                MasterTypeDetails,
+                MasterTypeDetails.mt_details_id == CudosMapCoursetoCourseInstructor.section_id,
+            )
+            .filter(
+                CudosMapCoursetoCourseInstructor.academic_batch_id == academic_batch_id
+            )
+            .filter(
+                CudosMapCoursetoCourseInstructor.semester_id == semester_id
+            )
+            .filter(
+                CudosMapCoursetoCourseInstructor.crs_id == course_id
+            )
+            .filter(
+                CudosMapCoursetoCourseInstructor.section_id.isnot(None)
+            )
+            .distinct()
+            .order_by(
+                MasterTypeDetails.mt_details_name
+            )
+            .all()
+        )
+
+        # Return in same format as your section_list endpoint
+        result = [
+            {
+                "value": section_id,
+                "label": section_name,
+            }
+            for section_id, section_name in sections
+        ]
+
+        return {
+            "success": True,
+            "message": "Sections fetched successfully",
+            "data": result
+        }
+
+    except Exception as e:
+        return {
+            "success": False,
+            "message": str(e),
+            "data": []
+        }
 
 
 # Fetches topic values for the selected course context.

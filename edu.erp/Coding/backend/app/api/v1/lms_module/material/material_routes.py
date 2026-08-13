@@ -58,7 +58,7 @@ def get_all_sections(db: Session = Depends(get_db)):
 from typing import List
 
 @router.post("/create_material")
-def create_material(
+async def create_material(
     academic_batch_id: int = Form(0),
     semester_id: int = Form(0),
     course_id: int = Form(0),
@@ -67,8 +67,8 @@ def create_material(
     description: str = Form(None),
     created_by: int = Form(...),
     topic_id: str = Form(None),
-    license: str = Form(None),
-    notify_type: str = Form(None),
+    license: str = Form(None),  # 'Proprietary', 'Paid', 'Public'
+    notify_type: str = Form(None),  # 'pre' or 'post'
     additional_info: str = Form(None),
     doc_type: str = Form('document'),
     url: str = Form(None),
@@ -78,66 +78,58 @@ def create_material(
     from datetime import datetime as _dt
     from sqlalchemy import text as _text
     
-    # ---------- DB INSERT ----------
-    # Convert 0 → None so FK constraints aren't violated when batch/semester data doesn't exist
+    # Convert license string to license_flag (tinyint)
+    license_flag_map = {
+        'Proprietary': 1,
+        'proprietary': 1,
+        'Paid': 2,
+        'paid': 2,
+        'Public': 3,
+        'public': 3
+    }
+    license_flag = license_flag_map.get(license, 0) if license else 0
+    
+    # Convert notify_type to before_after_class_flag (tinyint)
+    # pre-reading = 1, post-reading = 2
+    before_after_class_flag = 1 if notify_type == 'pre' else 2 if notify_type == 'post' else 0
+    
+    # Convert 0 → None so FK constraints aren't violated
     batch_id_val = academic_batch_id if academic_batch_id and academic_batch_id != 0 else None
     semester_id_val = semester_id if semester_id and semester_id != 0 else None
     course_id_val = course_id if course_id and course_id != 0 else None
 
-    # Helper function to execute DB insert
     def _insert_material(f_name, f_url):
-        # Check which optional columns exist in the table
-        col_check = db.execute(_text("""
-            SELECT GROUP_CONCAT(COLUMN_NAME) AS cols
-            FROM INFORMATION_SCHEMA.COLUMNS
-            WHERE TABLE_SCHEMA = DATABASE()
-              AND TABLE_NAME = 'lms_crs_material_upload'
-              AND COLUMN_NAME IN ('doc_type', 'license')
-        """)).mappings().first()
-        existing_optional = set((col_check["cols"] or "").split(",")) if col_check and col_check["cols"] else set()
-
-        extra_cols = ""
-        extra_vals = ""
-        extra_params = {}
-        if "doc_type" in existing_optional:
-            extra_cols += ", doc_type"
-            extra_vals += ", :doc_type"
-            extra_params["doc_type"] = doc_type
-        if "license" in existing_optional:
-            extra_cols += ", license"
-            extra_vals += ", :license"
-            extra_params["license"] = license
-
-        base_params = {
-            "document_name": title,
-            "file_name": f_name,
-            "docment_url": f_url,
-            "description": description,
-            "academic_batch_id": batch_id_val,
-            "semester_id": semester_id_val,
-            "crs_id": course_id_val,
-            "section_ids": str(section_id),
-            "topic_ids": topic_id,
-            "created_by": created_by,
-            "created_date": _dt.now(),
-        }
-        base_params.update(extra_params)
-
         db.execute(
-            _text(f"""
+            _text("""
                 INSERT INTO lms_crs_material_upload
                     (document_name, file_name, docment_url, description,
                      academic_batch_id, semester_id, crs_id, section_ids,
-                     topic_ids, created_by, created_date, update_cnt{extra_cols})
+                     topic_ids, created_by, created_date, update_cnt,
+                     before_after_class_flag, license_flag)
                 VALUES
                     (:document_name, :file_name, :docment_url, :description,
                      :academic_batch_id, :semester_id, :crs_id, :section_ids,
-                     :topic_ids, :created_by, :created_date, 0{extra_vals})
+                     :topic_ids, :created_by, :created_date, 0,
+                     :before_after_class_flag, :license_flag)
             """),
-            base_params
+            {
+                "document_name": title,
+                "file_name": f_name,
+                "docment_url": f_url,
+                "description": description,
+                "academic_batch_id": batch_id_val,
+                "semester_id": semester_id_val,
+                "crs_id": course_id_val,
+                "section_ids": str(section_id),
+                "topic_ids": topic_id,
+                "created_by": created_by,
+                "created_date": _dt.now(),
+                "before_after_class_flag": before_after_class_flag,
+                "license_flag": license_flag
+            }
         )
 
-    # Handle URL-based materials (no file required)
+    # Handle URL-based materials
     if doc_type == 'url':
         if not url or not url.strip():
             raise HTTPException(status_code=400, detail="URL is required for url type material")
@@ -173,33 +165,15 @@ def create_material(
         "message": "Material uploaded successfully"
     }
 
-
 @router.post("/material_list")
 def material_list(request: MaterialListRequest, db: Session = Depends(get_db)):
-
-    # Detect which optional columns exist in the table
-    col_check = db.execute(text("""
-        SELECT GROUP_CONCAT(COLUMN_NAME) AS cols
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'lms_crs_material_upload'
-          AND COLUMN_NAME IN ('doc_type', 'license')
-    """)).mappings().first()
-    existing_optional = set((col_check["cols"] or "").split(",")) if col_check and col_check["cols"] else set()
-
-    doc_type_sel = "m.doc_type," if "doc_type" in existing_optional else "NULL AS doc_type,"
-    license_sel  = "m.license,"  if "license"  in existing_optional else "NULL AS license,"
-
-    # Build query with LEFT JOIN on topic so topic_title is returned alongside material
-    sql = f"""
+    sql = """
         SELECT
             m.mat_id,
             m.document_name,
             m.file_name,
             m.docment_url,
-            {doc_type_sel}
             m.description,
-            {license_sel}
             m.topic_ids,
             m.section_ids,
             m.academic_batch_id,
@@ -207,6 +181,8 @@ def material_list(request: MaterialListRequest, db: Session = Depends(get_db)):
             m.crs_id,
             m.created_by,
             m.created_date,
+            m.before_after_class_flag,
+            m.license_flag,
             COALESCE(t.topic_title, '') AS topic_title,
             COALESCE(t.topic_code, '')  AS topic_code
         FROM lms_crs_material_upload m
@@ -229,61 +205,365 @@ def material_list(request: MaterialListRequest, db: Session = Depends(get_db)):
     sql += " ORDER BY m.mat_id DESC"
 
     rows = db.execute(text(sql), params).mappings().all()
-    return [dict(r) for r in rows]
-
+    
+    # Convert flags to readable values for frontend
+    result = []
+    for row in rows:
+        row_dict = dict(row)
+        
+        # Convert license_flag to license string
+        license_map = {1: 'Proprietary', 2: 'Paid', 3: 'Public'}
+        row_dict['license'] = license_map.get(row_dict.get('license_flag', 0), '')
+        
+        # Convert before_after_class_flag to notify_type
+        notify_map = {1: 'pre', 2: 'post'}
+        row_dict['notify_type'] = notify_map.get(row_dict.get('before_after_class_flag', 0), '')
+        
+        result.append(row_dict)
+    
+    return result
 
 
 class StudentListRequest(BaseModel):
     section_id: int
     academic_batch_id: int = 0
     semester_id: int = 0
+    course_id: int = 0  # Make sure this exists
+
+# @router.post("/student_list")
+# def student_list(request: StudentListRequest, db: Session = Depends(get_db)):
+#     # Look up the section label so we can filter iems_students by section name
+#     section_row = db.execute(
+#         text("SELECT section FROM iems_section WHERE id = :id LIMIT 1"),
+#         {"id": request.section_id}
+#     ).mappings().first()
+#     section_label = section_row["section"] if section_row else None
+
+#     query = "SELECT student_id, usno, name, first_name, last_name, section, current_semester, academic_batch_id FROM iems_students WHERE status = 1 AND IFNULL(delete_status, 0) = 0"
+#     params = {}
+#     if request.academic_batch_id and request.academic_batch_id != 0:
+#         query += " AND academic_batch_id = :academic_batch_id"
+#         params["academic_batch_id"] = request.academic_batch_id
+#     if request.semester_id and request.semester_id != 0:
+#         query += " AND current_semester = (SELECT semester FROM iems_semester WHERE semester_id = :semester_id LIMIT 1)"
+#         params["semester_id"] = request.semester_id
+#     if section_label:
+#         query += " AND section = :section"
+#         params["section"] = section_label
+#     query += " ORDER BY student_id DESC"
+
+#     rows = db.execute(text(query), params).mappings().all()
+#     return {"data": [dict(r) for r in rows]}
+
 
 @router.post("/student_list")
 def student_list(request: StudentListRequest, db: Session = Depends(get_db)):
-    # Look up the section label so we can filter iems_students by section name
-    section_row = db.execute(
-        text("SELECT section FROM iems_section WHERE id = :id LIMIT 1"),
-        {"id": request.section_id}
-    ).mappings().first()
-    section_label = section_row["section"] if section_row else None
+    try:
+        print("\n========== STUDENT LIST API ==========")
+        print("section_id:", request.section_id)
+        print("academic_batch_id:", request.academic_batch_id)
+        print("semester_id:", request.semester_id)
+        print("course_id:", request.course_id)
 
-    query = "SELECT student_id, usno, name, first_name, last_name, section, current_semester, academic_batch_id FROM iems_students WHERE status = 1 AND IFNULL(delete_status, 0) = 0"
-    params = {}
-    if request.academic_batch_id and request.academic_batch_id != 0:
-        query += " AND academic_batch_id = :academic_batch_id"
-        params["academic_batch_id"] = request.academic_batch_id
-    if request.semester_id and request.semester_id != 0:
-        query += " AND current_semester = (SELECT semester FROM iems_semester WHERE semester_id = :semester_id LIMIT 1)"
-        params["semester_id"] = request.semester_id
-    if section_label:
-        query += " AND section = :section"
-        params["section"] = section_label
-    query += " ORDER BY student_id DESC"
+        # Validate required parameters
+        if not all([request.section_id, request.academic_batch_id, 
+                   request.semester_id, request.course_id]):
+            return {
+                "success": False,
+                "message": "All parameters are required",
+                "data": []
+            }
 
-    rows = db.execute(text(query), params).mappings().all()
-    return {"data": [dict(r) for r in rows]}
+        # First verify the section exists in the mapping
+        section_check = db.execute(
+            text("""
+                SELECT COUNT(*) as count 
+                FROM cudos_map_courseto_student 
+                WHERE academic_batch_id = :academic_batch_id
+                    AND semester_id = :semester_id
+                    AND crs_id = :course_id
+                    AND section_id = :section_id
+                LIMIT 1
+            """),
+            {
+                "academic_batch_id": request.academic_batch_id,
+                "semester_id": request.semester_id,
+                "course_id": request.course_id,
+                "section_id": request.section_id
+            }
+        ).mappings().first()
+
+        if not section_check or section_check['count'] == 0:
+            # Fallback: Try to get section from iems_section
+            section_row = db.execute(
+                text("SELECT section FROM iems_section WHERE id = :id LIMIT 1"),
+                {"id": request.section_id}
+            ).mappings().first()
+            
+            if section_row:
+                section_label = section_row["section"]
+                # Fallback query using iems_students
+                query = """
+                    SELECT 
+                        student_id, 
+                        usno, 
+                        name, 
+                        first_name, 
+                        last_name, 
+                        section, 
+                        current_semester, 
+                        academic_batch_id 
+                    FROM iems_students 
+                    WHERE status = 1 
+                        AND IFNULL(delete_status, 0) = 0
+                        AND academic_batch_id = :academic_batch_id
+                        AND current_semester = :semester
+                        AND section = :section
+                    ORDER BY student_id DESC
+                """
+                params = {
+                    "academic_batch_id": request.academic_batch_id,
+                    "semester": request.semester_id,
+                    "section": section_label
+                }
+                rows = db.execute(text(query), params).mappings().all()
+                return {"data": [dict(r) for r in rows]}
+
+        # Fetch students from cudos_map_courseto_student
+        query = """
+            SELECT DISTINCT
+                s.student_id,
+                s.usno,
+                s.name,
+                s.first_name,
+                s.last_name,
+                s.section,
+                s.current_semester,
+                s.academic_batch_id,
+                mcs.crs_reg_flag,
+                mcs.opel_crs_flag,
+                mcs.mcstd_id
+            FROM cudos_map_courseto_student mcs
+            INNER JOIN iems_students s 
+                ON s.student_id = mcs.student_id
+                AND s.status = 1 
+                AND IFNULL(s.delete_status, 0) = 0
+            WHERE mcs.academic_batch_id = :academic_batch_id
+                AND mcs.semester_id = :semester_id
+                AND mcs.crs_id = :course_id
+                AND mcs.section_id = :section_id
+                AND (mcs.status = 1 OR mcs.status IS NULL)
+            ORDER BY s.student_id DESC
+        """
+        
+        params = {
+            "academic_batch_id": request.academic_batch_id,
+            "semester_id": request.semester_id,
+            "course_id": request.course_id,
+            "section_id": request.section_id
+        }
+
+        rows = db.execute(text(query), params).mappings().all()
+        
+        # Format response
+        result = []
+        for row in rows:
+            student_data = dict(row)
+            if not student_data.get('name'):
+                first = student_data.get('first_name', '')
+                last = student_data.get('last_name', '')
+                student_data['name'] = f"{first} {last}".strip() or student_data.get('usno', '')
+            result.append(student_data)
+
+        print("Students found:", len(result))
+        print("=====================================\n")
+
+        return {"data": result}
+
+    except Exception as e:
+        import traceback
+        print("\n========== STUDENT LIST ERROR ==========")
+        print("Exception:", repr(e))
+        traceback.print_exc()
+        print("========================================\n")
+        
+        return {
+            "success": False,
+            "message": str(e),
+            "data": []
+        }
+
+# @router.post("/share_material")
+# def share_material(request: ShareMaterialRequest, db: Session = Depends(get_db)):
+
+#     for student_usn in request.student_usns:
+
+#         mapping = LMSMapShareMaterialsToStudent(
+#             ssd_id=None,
+#             mat_id=request.material_id,
+#             academic_batch_id=request.academic_batch_id,
+#             section_id=request.section_id,
+#             student_usn=student_usn
+#         )
+
+#         db.add(mapping)
+
+#     db.commit()
+
+#     return {
+#         "status": True,
+#         "message": "Material shared successfully"
+#     }
+
+class ShareMaterialRequest(BaseModel):
+    material_id: int
+    academic_batch_id: int
+    section_id: int
+    student_ids: List[int]
 
 @router.post("/share_material")
 def share_material(request: ShareMaterialRequest, db: Session = Depends(get_db)):
+    try:
+        print("\n========== SHARE MATERIAL API ==========")
+        print("Request:", request.dict())
 
-    for student_usn in request.student_usns:
+        # Validate required parameters
+        if not all([request.material_id, request.academic_batch_id, request.section_id]):
+            return {
+                "success": False,
+                "message": "material_id, academic_batch_id, and section_id are required"
+            }
 
-        mapping = LMSMapShareMaterialsToStudent(
-            ssd_id=None,
-            mat_id=request.material_id,
-            academic_batch_id=request.academic_batch_id,
-            section_id=request.section_id,
-            student_usn=student_usn
-        )
+        if not request.student_ids:
+            return {
+                "success": False,
+                "message": "At least one student must be selected"
+            }
 
-        db.add(mapping)
+        # Check if material exists
+        material = db.execute(
+            text("SELECT mat_id FROM lms_crs_material_upload WHERE mat_id = :id"),
+            {"id": request.material_id}
+        ).mappings().first()
 
-    db.commit()
+        if not material:
+            return {
+                "success": False,
+                "message": "Material not found"
+            }
 
-    return {
-        "status": True,
-        "message": "Material shared successfully"
-    }
+        # Verify section exists in cudos_master_type_details
+        section = db.execute(
+            text("SELECT mt_details_id FROM cudos_master_type_details WHERE mt_details_id = :id"),
+            {"id": request.section_id}
+        ).mappings().first()
+
+        if not section:
+            return {
+                "success": False,
+                "message": f"Section with ID {request.section_id} not found"
+            }
+
+        # Get existing student_ids for this material
+        existing_students = db.execute(
+            text("""
+                SELECT ssd_id 
+                FROM lms_map_share_materials_to_student 
+                WHERE mat_id = :material_id 
+                AND academic_batch_id = :academic_batch_id
+                AND section_id = :section_id
+            """),
+            {
+                "material_id": request.material_id,
+                "academic_batch_id": request.academic_batch_id,
+                "section_id": request.section_id
+            }
+        ).mappings().all()
+
+        existing_student_ids = {row["ssd_id"] for row in existing_students}
+        print(f"Existing student IDs: {existing_student_ids}")
+
+        # Filter out students that are already mapped
+        new_student_ids = [sid for sid in request.student_ids if sid not in existing_student_ids]
+        print(f"New student IDs to insert: {new_student_ids}")
+
+        if not new_student_ids:
+            return {
+                "success": True,
+                "message": "All selected students are already mapped to this material",
+                "data": {
+                    "total_students": len(request.student_ids),
+                    "existing_count": len(existing_student_ids),
+                    "new_count": 0
+                }
+            }
+
+        # Get student details for the new student IDs - FIXED VERSION
+        # Build the IN clause with proper parameter binding
+        placeholders = ', '.join([f':id_{i}' for i in range(len(new_student_ids))])
+        params = {f'id_{i}': value for i, value in enumerate(new_student_ids)}
+        
+        query = text(f"""
+            SELECT student_id, usno, name, first_name, last_name
+            FROM iems_students 
+            WHERE student_id IN ({placeholders})
+            AND status = 1 
+            AND IFNULL(delete_status, 0) = 0
+        """)
+        
+        students = db.execute(query, params).mappings().all()
+
+        if not students:
+            return {
+                "success": False,
+                "message": "No valid students found"
+            }
+
+        # Insert new mappings only for students that don't already exist
+        inserted_count = 0
+        for student in students:
+            # Insert new mapping
+            db.execute(
+                text("""
+                    INSERT INTO lms_map_share_materials_to_student 
+                    (ssd_id, mat_id, academic_batch_id, section_id, student_usn)
+                    VALUES (:ssd_id, :mat_id, :academic_batch_id, :section_id, :student_usn)
+                """),
+                {
+                    "ssd_id": student["student_id"],
+                    "mat_id": request.material_id,
+                    "academic_batch_id": request.academic_batch_id,
+                    "section_id": request.section_id,
+                    "student_usn": student["usno"]
+                }
+            )
+            inserted_count += 1
+
+        db.commit()
+        print(f"Inserted {inserted_count} new mappings")
+        print("=====================================\n")
+
+        return {
+            "success": True,
+            "message": f"Material shared successfully with {inserted_count} new students",
+            "data": {
+                "total_students": len(request.student_ids),
+                "existing_count": len(existing_student_ids),
+                "new_count": inserted_count
+            }
+        }
+
+    except Exception as e:
+        import traceback
+        print("\n========== SHARE MATERIAL ERROR ==========")
+        print("Exception:", repr(e))
+        traceback.print_exc()
+        print("========================================\n")
+        db.rollback()
+        return {
+            "success": False,
+            "message": str(e)
+        }
 
 @router.get("/download_material/{mat_id}")
 def download_material(mat_id: int, db: Session = Depends(get_db)):
@@ -325,8 +605,22 @@ def update_material(
     section_id: str = Form(None),
     topic_id: str = Form(None),
     license: str = Form(None),
+    notify_type: str = Form(None),
     db: Session = Depends(get_db)
 ):
+    # Convert license string to license_flag
+    license_flag_map = {
+        'Proprietary': 1,
+        'proprietary': 1,
+        'Paid': 2,
+        'paid': 2,
+        'Public': 3,
+        'public': 3
+    }
+    license_flag = license_flag_map.get(license, 0) if license else 0
+    
+    # Convert notify_type to before_after_class_flag
+    before_after_class_flag = 1 if notify_type == 'pre' else 2 if notify_type == 'post' else 0
 
     sql = "SELECT mat_id, file_name, docment_url FROM lms_crs_material_upload WHERE mat_id = :id"
     row = db.execute(text(sql), {"id": material_id}).mappings().first()
@@ -353,47 +647,32 @@ def update_material(
             buffer.write(file.file.read())
         file_name_val = file.filename
 
-    # Detect which optional columns exist for the UPDATE
-    col_check2 = db.execute(text("""
-        SELECT GROUP_CONCAT(COLUMN_NAME) AS cols
-        FROM INFORMATION_SCHEMA.COLUMNS
-        WHERE TABLE_SCHEMA = DATABASE()
-          AND TABLE_NAME = 'lms_crs_material_upload'
-          AND COLUMN_NAME IN ('doc_type', 'license')
-    """)).mappings().first()
-    existing_upd = set((col_check2["cols"] or "").split(",")) if col_check2 and col_check2["cols"] else set()
-
-    optional_sets = ""
-    upd_params = {
-        "title": title,
-        "desc": description,
-        "file_name": file_name_val,
-        "url": file_path_val,
-        "section_id": section_id,
-        "topic_id": topic_id,
-        "id": material_id
-    }
-    if "doc_type" in existing_upd:
-        optional_sets += "doc_type = :doc_type,\n                "
-        upd_params["doc_type"] = doc_type
-    if "license" in existing_upd:
-        optional_sets += "license = COALESCE(:license, license),\n                "
-        upd_params["license"] = license
-
     db.execute(
-        text(f"""
+        text("""
             UPDATE lms_crs_material_upload 
             SET document_name = :title,
                 description = :desc,
                 file_name = :file_name,
                 docment_url = :url,
-                {optional_sets}
                 section_ids = COALESCE(:section_id, section_ids),
                 topic_ids = COALESCE(:topic_id, topic_ids),
-                update_cnt = update_cnt + 1
+                license_flag = COALESCE(:license_flag, license_flag),
+                before_after_class_flag = COALESCE(:before_after_class_flag, before_after_class_flag),
+                update_cnt = update_cnt + 1,
+                modified_date = NOW()
             WHERE mat_id = :id
         """),
-        upd_params
+        {
+            "title": title,
+            "desc": description,
+            "file_name": file_name_val,
+            "url": file_path_val,
+            "section_id": section_id,
+            "topic_id": topic_id,
+            "license_flag": license_flag if license else None,
+            "before_after_class_flag": before_after_class_flag if notify_type else None,
+            "id": material_id
+        }
     )
     db.commit()
 
@@ -410,33 +689,124 @@ def delete_material(material_id: int, db: Session = Depends(get_db)):
     if res.rowcount == 0:
         raise HTTPException(status_code=404, detail="Material not found")
     return {"status": True, "message": "Material deleted successfully"}
+
+# @router.post("/material_mapping_list")
+# def material_mapping_list(request: MaterialMappingRequest, db: Session = Depends(get_db)):
+
+#     mappings = db.query(LMSMapShareMaterialsToStudent).filter(
+#         LMSMapShareMaterialsToStudent.mat_id == request.material_id
+#     ).all()
+
+#     result = []
+
+#     for m in mappings:
+#         # Look up student name from iems_students table (usno column)
+#         student_row = db.execute(
+#             text("SELECT name, first_name, last_name FROM iems_students WHERE usno = :usno LIMIT 1"),
+#             {"usno": m.student_usn}
+#         ).mappings().first()
+
+#         if student_row:
+#             first = student_row.get("first_name") or ""
+#             last  = student_row.get("last_name")  or ""
+#             name  = f"{first} {last}".strip() or student_row.get("name") or m.student_usn
+#         else:
+#             name = m.student_usn
+
+#         result.append({
+#             "student_usn": m.student_usn,
+#             "student_name": name,
+#             "section_id": m.section_id
+#         })
+
+#     return result
+
 @router.post("/material_mapping_list")
 def material_mapping_list(request: MaterialMappingRequest, db: Session = Depends(get_db)):
+    try:
+        print("\n========== MATERIAL MAPPING LIST ==========")
+        print("material_id:", request.material_id)
 
-    mappings = db.query(LMSMapShareMaterialsToStudent).filter(
-        LMSMapShareMaterialsToStudent.mat_id == request.material_id
-    ).all()
-
-    result = []
-
-    for m in mappings:
-        # Look up student name from iems_students table (usno column)
-        student_row = db.execute(
-            text("SELECT name, first_name, last_name FROM iems_students WHERE usno = :usno LIMIT 1"),
-            {"usno": m.student_usn}
+        # First, check if the material exists
+        material = db.execute(
+            text("SELECT mat_id, document_name FROM lms_crs_material_upload WHERE mat_id = :id"),
+            {"id": request.material_id}
         ).mappings().first()
 
-        if student_row:
-            first = student_row.get("first_name") or ""
-            last  = student_row.get("last_name")  or ""
-            name  = f"{first} {last}".strip() or student_row.get("name") or m.student_usn
-        else:
-            name = m.student_usn
+        if not material:
+            return {
+                "success": False,
+                "message": "Material not found",
+                "data": []
+            }
 
-        result.append({
-            "student_usn": m.student_usn,
-            "student_name": name,
-            "section_id": m.section_id
-        })
+        print(f"Material found: {material['document_name']}")
 
-    return result
+        # Query to get all students mapped to this material
+        mappings = db.execute(
+            text("""
+                SELECT 
+                    msm.material_student_map_id,
+                    msm.ssd_id,
+                    msm.mat_id,
+                    msm.academic_batch_id,
+                    msm.section_id,
+                    msm.student_usn,
+                    s.name,
+                    s.first_name,
+                    s.last_name,
+                    s.usno,
+                    s.section as student_section,
+                    mtd.mt_details_name as section_name
+                FROM lms_map_share_materials_to_student msm
+                LEFT JOIN iems_students s ON s.student_id = msm.ssd_id
+                LEFT JOIN cudos_master_type_details mtd ON mtd.mt_details_id = msm.section_id
+                WHERE msm.mat_id = :material_id
+                ORDER BY msm.material_student_map_id DESC
+            """),
+            {"material_id": request.material_id}
+        ).mappings().all()
+
+        print(f"Found {len(mappings)} mappings")
+
+        # Format the response
+        result = []
+        for m in mappings:
+            # Build student name from first_name and last_name
+            first = m.get("first_name") or ""
+            last = m.get("last_name") or ""
+            name = f"{first} {last}".strip()
+            
+            # If name is empty, use the name field or USN
+            if not name:
+                name = m.get("name") or m.get("student_usn") or m.get("usno") or "Unknown"
+            
+            result.append({
+                "student_usn": m.get("student_usn") or m.get("usno") or "",
+                "student_name": name,
+                "student_id": m.get("ssd_id"),
+                "section_id": m.get("section_id"),
+                "section_name": m.get("section_name", ""),
+                "student_section": m.get("student_section", "")
+            })
+
+        print(f"Returning {len(result)} students")
+        print("=====================================\n")
+
+        return {
+            "success": True,
+            "message": f"Found {len(result)} students mapped to this material",
+            "data": result
+        }
+
+    except Exception as e:
+        import traceback
+        print("\n========== MATERIAL MAPPING LIST ERROR ==========")
+        print("Exception:", repr(e))
+        traceback.print_exc()
+        print("========================================\n")
+        return {
+            "success": False,
+            "message": str(e),
+            "data": []
+        }
