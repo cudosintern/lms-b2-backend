@@ -140,19 +140,28 @@ def get_assignment_options(
     course_query += " ORDER BY crs_id DESC"
     courses = db.execute(text(course_query), course_params).mappings().all()
 
-    section_query = "SELECT MIN(id) AS section_id, section, academic_batch_id, semester_id FROM iems_section WHERE 1=1"
+    # Updated to use cudos_master_type_details
+    section_query = """
+        SELECT 
+            mt_details_id AS section_id, 
+            mt_details_name AS section
+        FROM cudos_master_type_details 
+        WHERE mtd_status = 1
+    """
     section_params = {}
-    if academic_batch_id is not None:
-        section_query += " AND academic_batch_id = :academic_batch_id"
-        section_params["academic_batch_id"] = academic_batch_id
-    if semester_id is not None:
-        section_query += " AND semester_id = :semester_id"
-        section_params["semester_id"] = semester_id
-    section_query += " GROUP BY section, academic_batch_id, semester_id ORDER BY section ASC"
+    # Add filters if needed based on master_type_id
+    # section_query += " AND master_type_id = :master_type_id"
+    # section_params["master_type_id"] = 1  # Replace with actual master type ID for sections
+    
+    section_query += " ORDER BY mt_details_name ASC"
     sections = db.execute(text(section_query), section_params).mappings().all()
 
-    return returnSuccess({"academic_batches": batches, "semesters": semesters, "courses": courses, "sections": sections})
-
+    return returnSuccess({
+        "academic_batches": batches, 
+        "semesters": semesters, 
+        "courses": courses, 
+        "sections": sections
+    })
 
 # Fetches topics based on selected batch, semester, and course for assignment creation.
 @router.get("/meta/topics")
@@ -169,9 +178,13 @@ def get_assignment_topics(academic_batch_id: int, semester_id: int, crs_id: int,
 # Fetches bloom levels available for assignment mapping.
 @router.get("/meta/bloom-levels")
 def get_bloom_levels(db: Session = Depends(get_db)):
-    rows = db.execute(text("SELECT bloom_id, bloom_name, bloom_code FROM cudos_bloom_level ORDER BY bloom_id ASC")).mappings().all()
-    return returnSuccess(rows)
-
+    try:
+        rows = db.execute(text("SELECT bloom_id, bloom_name, bloom_code FROM cudos_bloom_level ORDER BY bloom_id ASC")).mappings().all()
+        # Return whatever data exists, even if empty
+        return returnSuccess(rows)
+    except Exception:
+        # Return empty array on error
+        return returnSuccess([])
 
 # Fetches CLO list for the selected course to support assignment mapping.
 @router.get("/meta/clos")
@@ -181,27 +194,157 @@ def get_clos_for_course(crs_id: int, db: Session = Depends(get_db)):
 
 
 # Fetches student list for sharing assignment based on selected class filters.
+# @router.get("/meta/students")
+# def get_students_for_assignment(
+#     academic_batch_id: Optional[int] = Query(default=None),
+#     semester_id: Optional[int] = Query(default=None),
+#     section: Optional[str] = Query(default=None),
+#     db: Session = Depends(get_db),
+# ):
+#     query = "SELECT student_id, usno, name, first_name, last_name, academic_batch_id, current_semester, section FROM iems_students WHERE status = 1 AND IFNULL(delete_status, 0) = 0"
+#     params = {}
+#     if academic_batch_id is not None:
+#         query += " AND academic_batch_id = :academic_batch_id"
+#         params["academic_batch_id"] = academic_batch_id
+#     if semester_id is not None:
+#         query += " AND current_semester = (SELECT semester FROM iems_semester WHERE semester_id = :semester_id)"
+#         params["semester_id"] = semester_id
+#     if section is not None and section.strip():
+#         query += " AND section = :section"
+#         params["section"] = section.strip()
+#     query += " ORDER BY student_id DESC"
+#     rows = db.execute(text(query), params).mappings().all()
+#     return returnSuccess({"total": len(rows), "items": rows})
+
 @router.get("/meta/students")
 def get_students_for_assignment(
     academic_batch_id: Optional[int] = Query(default=None),
     semester_id: Optional[int] = Query(default=None),
     section: Optional[str] = Query(default=None),
+    crs_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    query = "SELECT student_id, usno, name, first_name, last_name, academic_batch_id, current_semester, section FROM iems_students WHERE status = 1 AND IFNULL(delete_status, 0) = 0"
-    params = {}
-    if academic_batch_id is not None:
-        query += " AND academic_batch_id = :academic_batch_id"
-        params["academic_batch_id"] = academic_batch_id
-    if semester_id is not None:
-        query += " AND current_semester = (SELECT semester FROM iems_semester WHERE semester_id = :semester_id)"
-        params["semester_id"] = semester_id
-    if section is not None and section.strip():
-        query += " AND section = :section"
-        params["section"] = section.strip()
-    query += " ORDER BY student_id DESC"
-    rows = db.execute(text(query), params).mappings().all()
-    return returnSuccess({"total": len(rows), "items": rows})
+    try:
+        print("=" * 50)
+        print("📋 GET /meta/students - Fetching students for assignment")
+        print(f"📌 Parameters: academic_batch_id={academic_batch_id}, semester_id={semester_id}, section={section}, crs_id={crs_id}")
+        
+        # Check if mapping table exists
+        table_check = db.execute(
+            text("SHOW TABLES LIKE 'cudos_map_courseto_student'")
+        ).scalar()
+        
+        if not table_check:
+            print("⚠️ cudos_map_courseto_student table not found, falling back to basic query")
+            # Fallback to basic query without course mapping
+            query = """
+                SELECT DISTINCT
+                    s.student_id, 
+                    s.usno, 
+                    s.name, 
+                    s.first_name, 
+                    s.last_name, 
+                    s.academic_batch_id, 
+                    s.current_semester, 
+                    s.section
+                FROM iems_students s
+                WHERE s.status = 1 
+                AND IFNULL(s.delete_status, 0) = 0
+            """
+            params = {}
+            
+            if academic_batch_id is not None:
+                query += " AND s.academic_batch_id = :academic_batch_id"
+                params["academic_batch_id"] = academic_batch_id
+            
+            if semester_id is not None:
+                query += " AND s.current_semester = (SELECT semester FROM iems_semester WHERE semester_id = :semester_id)"
+                params["semester_id"] = semester_id
+            
+            if section is not None and section.strip():
+                query += " AND s.section = :section"
+                params["section"] = section.strip()
+            
+            query += " ORDER BY s.student_id DESC"
+            
+            rows = db.execute(text(query), params).mappings().all()
+            return returnSuccess({"total": len(rows), "items": rows})
+        
+        # Main query using cudos_map_courseto_student
+        query = """
+            SELECT DISTINCT
+                s.student_id, 
+                s.usno, 
+                s.name, 
+                s.first_name, 
+                s.last_name, 
+                s.academic_batch_id, 
+                s.current_semester, 
+                s.section
+            FROM iems_students s
+            INNER JOIN cudos_map_courseto_student mcs ON mcs.student_id = s.student_id
+            WHERE s.status = 1 
+            AND IFNULL(s.delete_status, 0) = 0
+            AND mcs.status = 1
+            AND mcs.crs_reg_flag = 1
+        """
+        params = {}
+        
+        if academic_batch_id is not None:
+            query += " AND mcs.academic_batch_id = :academic_batch_id"
+            params["academic_batch_id"] = academic_batch_id
+        
+        if semester_id is not None:
+            query += " AND mcs.semester_id = :semester_id"
+            params["semester_id"] = semester_id
+        
+        if crs_id is not None:
+            query += " AND mcs.crs_id = :crs_id"
+            params["crs_id"] = crs_id
+        
+        if section is not None and section.strip():
+            # Try to find section_id from section name
+            section_id = None
+            try:
+                section_result = db.execute(
+                    text("""
+                        SELECT mt_details_id 
+                        FROM cudos_master_type_details 
+                        WHERE mt_details_name = :section_name 
+                        AND mtd_status = 1
+                    """),
+                    {"section_name": section.strip()}
+                ).scalar()
+                if section_result:
+                    section_id = section_result
+                    print(f"✅ Found section_id: {section_id} for section: {section}")
+            except Exception as e:
+                print(f"⚠️ Error finding section_id: {str(e)}")
+            
+            if section_id:
+                query += " AND mcs.section_id = :section_id"
+                params["section_id"] = section_id
+            else:
+                # Fallback: try to match by section name in students table
+                print(f"⚠️ No section_id found, using section name filter: {section}")
+                query += " AND s.section = :section"
+                params["section"] = section.strip()
+        
+        query += " ORDER BY s.student_id DESC"
+        
+        print(f"🔍 Query: {query}")
+        print(f"📊 Params: {params}")
+        
+        rows = db.execute(text(query), params).mappings().all()
+        
+        print(f"✅ Students found: {len(rows)}")
+        
+        return returnSuccess({"total": len(rows), "items": rows})
+    except Exception as e:
+        print(f"❌ Error in get_students_for_assignment: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return returnException(f"Error fetching students: {str(e)}")
 
 # Creates assignment, maps bloom/CLO, and optionally shares with students.
 @router.post("/create")
@@ -210,7 +353,7 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
         return returnException("assignment_name is required")
 
     try:
-        # Inserts assignment header into LMS assignment table.
+        # Insert into lms_manage_assignment (without topic_id and section_id)
         assignment_result = db.execute(
             text(
                 """
@@ -218,7 +361,6 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
                 (
                     assignment_name, additional_info, file_name, file_path,
                     academic_batch_id, semester_id, crs_id,
-                    section_id, topic_id,
                     issue_date, due_date,
                     status, assess_attain_flag, created_by, created_date
                 )
@@ -226,7 +368,6 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
                 (
                     :assignment_name, :additional_info, :file_name, :file_path,
                     :academic_batch_id, :semester_id, :crs_id,
-                    :section_id, :topic_id,
                     :issue_date, :due_date,
                     :status, :assess_attain_flag, :created_by, :created_date
                 )
@@ -240,8 +381,6 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
                 "academic_batch_id": payload.academic_batch_id,
                 "semester_id": payload.semester_id,
                 "crs_id": payload.crs_id,
-                "section_id": payload.section_id,
-                "topic_id": payload.topic_id,
                 "issue_date": payload.issue_date,
                 "due_date": payload.due_date,
                 "status": payload.status,
@@ -251,6 +390,42 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
             },
         )
         lms_assignment_id = assignment_result.lastrowid
+
+        # Insert section mapping into lms_map_assignment_upload
+        if payload.section_id:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO lms_map_assignment_upload 
+                    (lms_assignment_id, section_id, created_by, created_date)
+                    VALUES (:lms_assignment_id, :section_id, :created_by, :created_date)
+                    """
+                ),
+                {
+                    "lms_assignment_id": lms_assignment_id,
+                    "section_id": payload.section_id,
+                    "created_by": payload.created_by,
+                    "created_date": datetime.now(),
+                }
+            )
+
+        # Insert topic mapping into lms_map_assignment_upload
+        if payload.topic_id:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO lms_map_assignment_upload 
+                    (lms_assignment_id, topic_id, created_by, created_date)
+                    VALUES (:lms_assignment_id, :topic_id, :created_by, :created_date)
+                    """
+                ),
+                {
+                    "lms_assignment_id": lms_assignment_id,
+                    "topic_id": payload.topic_id,
+                    "created_by": payload.created_by,
+                    "created_date": datetime.now(),
+                }
+            )
 
         # Maps selected bloom levels with the created assignment.
         for bloom_id in payload.bloom_ids:
@@ -266,14 +441,6 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
                 {"lms_assignment_id": lms_assignment_id, "clo_id": clo_id, "created_by": payload.created_by, "created_date": datetime.now()},
             )
 
-        # Stores assignment-level uploads when upload map table exists.
-        if payload.uploads and _table_exists(db, "lms_map_assignment_upload"):
-            for upload in payload.uploads:
-                db.execute(
-                    text("INSERT INTO lms_map_assignment_upload (lms_assignment_id, file_name, file_path, created_by, created_date) VALUES (:lms_assignment_id, :file_name, :file_path, :created_by, :created_date)"),
-                    {"lms_assignment_id": lms_assignment_id, "file_name": upload.file_name, "file_path": upload.file_path, "created_by": payload.created_by, "created_date": datetime.now()},
-                )
-
         # Shares assignment with selected students on create when ids are provided.
         for student_id in payload.student_ids:
             student_row = db.execute(text("SELECT student_id, usno FROM iems_students WHERE student_id = :student_id LIMIT 1"), {"student_id": student_id}).mappings().first()
@@ -285,13 +452,76 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
             )
 
         db.commit()
-        return returnSuccess({"lms_assignment_id": lms_assignment_id, "bloom_count": len(payload.bloom_ids), "clo_count": len(payload.clo_ids), "shared_students_count": len(payload.student_ids)}, "Assignment created successfully")
+        return returnSuccess({
+            "lms_assignment_id": lms_assignment_id, 
+            "bloom_count": len(payload.bloom_ids), 
+            "clo_count": len(payload.clo_ids), 
+            "shared_students_count": len(payload.student_ids)
+        }, "Assignment created successfully")
     except Exception as exc:
         db.rollback()
+        print(f"Error creating assignment: {str(exc)}")
+        import traceback
+        traceback.print_exc()
         return returnException(f"Failed to create assignment: {str(exc)}")
 
 
 # Fetches paginated assignment list with optional filter criteria.
+# @router.get("/list")
+# def get_assignments(
+#     page: int = Query(default=1, ge=1),
+#     page_size: int = Query(default=20, ge=1, le=100),
+#     academic_batch_id: Optional[int] = Query(default=None),
+#     semester_id: Optional[int] = Query(default=None),
+#     crs_id: Optional[int] = Query(default=None),
+#     section_id: Optional[int] = Query(default=None),
+#     created_by: Optional[int] = Query(default=None),
+#     db: Session = Depends(get_db),
+# ):
+#     base_filter = " WHERE 1=1 "
+#     params = {}
+#     if academic_batch_id is not None:
+#         base_filter += " AND a.academic_batch_id = :academic_batch_id"
+#         params["academic_batch_id"] = academic_batch_id
+#     if semester_id is not None:
+#         base_filter += " AND a.semester_id = :semester_id"
+#         params["semester_id"] = semester_id
+#     if crs_id is not None:
+#         base_filter += " AND a.crs_id = :crs_id"
+#         params["crs_id"] = crs_id
+#     if created_by is not None:
+#         base_filter += " AND a.created_by = :created_by"
+#         params["created_by"] = created_by
+
+#     total = db.execute(text(f"SELECT COUNT(*) FROM lms_manage_assignment a {base_filter}"), params).scalar() or 0
+#     offset = (page - 1) * page_size
+    
+#     rows = db.execute(
+#         text(
+#             f"""
+#             SELECT
+#                 a.lms_assignment_id, a.assignment_name, a.additional_info, a.file_name, a.file_path,
+#                 a.academic_batch_id, a.semester_id, a.crs_id, a.issue_date, a.due_date,
+#                 a.status, a.assess_attain_flag, a.created_by, a.created_date,
+#                 a.section_id, a.topic_id,
+#                 COALESCE(a.update_count, 0) AS update_count,
+#                 COALESCE(t.topic_title, '') AS topic_title,
+#                 COALESCE(t.topic_code, '') AS topic_code,
+#                 COALESCE(s.mt_details_name, '') AS section_name,
+#                 (SELECT COUNT(*) FROM lms_map_assignment_to_students ms WHERE ms.lms_assignment_id = a.lms_assignment_id) AS shared_students_count
+#             FROM lms_manage_assignment a
+#             LEFT JOIN cudos_topic t ON t.topic_id = a.topic_id
+#             LEFT JOIN cudos_master_type_details s ON s.mt_details_id = a.section_id
+#             {base_filter}
+#             ORDER BY a.lms_assignment_id DESC
+#             LIMIT :limit OFFSET :offset
+#             """
+#         ),
+#         {**params, "limit": page_size, "offset": offset},
+#     ).mappings().all()
+
+#     return returnSuccess({"page": page, "page_size": page_size, "total": int(total), "items": [dict(r) for r in rows]})
+
 @router.get("/list")
 def get_assignments(
     page: int = Query(default=1, ge=1),
@@ -299,53 +529,103 @@ def get_assignments(
     academic_batch_id: Optional[int] = Query(default=None),
     semester_id: Optional[int] = Query(default=None),
     crs_id: Optional[int] = Query(default=None),
+    section_id: Optional[int] = Query(default=None),
     created_by: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    base_filter = " WHERE 1=1 "
-    params = {}
-    if academic_batch_id is not None:
-        base_filter += " AND a.academic_batch_id = :academic_batch_id"
-        params["academic_batch_id"] = academic_batch_id
-    if semester_id is not None:
-        base_filter += " AND a.semester_id = :semester_id"
-        params["semester_id"] = semester_id
-    if crs_id is not None:
-        base_filter += " AND a.crs_id = :crs_id"
-        params["crs_id"] = crs_id
-    if created_by is not None:
-        base_filter += " AND a.created_by = :created_by"
-        params["created_by"] = created_by
+    try:
+        print("=" * 60)
+        print("📋 GET /list - Fetching assignments")
+        print(f"📌 Parameters: page={page}, page_size={page_size}, academic_batch_id={academic_batch_id}, semester_id={semester_id}, crs_id={crs_id}, section_id={section_id}, created_by={created_by}")
+        
+        base_filter = " WHERE 1=1 "
+        params = {}
+        
+        if academic_batch_id is not None:
+            base_filter += " AND a.academic_batch_id = :academic_batch_id"
+            params["academic_batch_id"] = academic_batch_id
+        if semester_id is not None:
+            base_filter += " AND a.semester_id = :semester_id"
+            params["semester_id"] = semester_id
+        if crs_id is not None:
+            base_filter += " AND a.crs_id = :crs_id"
+            params["crs_id"] = crs_id
+        if created_by is not None:
+            base_filter += " AND a.created_by = :created_by"
+            params["created_by"] = created_by
+        
+        # If section_id is provided, filter by existence in lms_map_assignment_upload
+        if section_id is not None:
+            base_filter += """ AND EXISTS (
+                SELECT 1 FROM lms_map_assignment_upload sau 
+                WHERE sau.lms_assignment_id = a.lms_assignment_id 
+                AND sau.section_id = :section_id
+            )"""
+            params["section_id"] = section_id
 
-    total = db.execute(text(f"SELECT COUNT(*) FROM lms_manage_assignment a {base_filter}"), params).scalar() or 0
-    offset = (page - 1) * page_size
-    rows = db.execute(
-        text(
-            f"""
-            SELECT
-                a.lms_assignment_id, a.assignment_name, a.additional_info, a.file_name, a.file_path,
-                a.academic_batch_id, a.semester_id, a.crs_id, a.issue_date, a.due_date,
-                a.status, a.assess_attain_flag, a.created_by, a.created_date,
-                a.section_id, a.topic_id,
-                COALESCE(a.update_count, 0) AS update_count,
-                COALESCE(t.topic_title, '') AS topic_title,
-                COALESCE(t.topic_code,  '') AS topic_code,
-                COALESCE(s.section, '')     AS section_name,
-                (SELECT COUNT(*) FROM lms_map_assignment_to_students ms WHERE ms.lms_assignment_id = a.lms_assignment_id) AS shared_students_count
-            FROM lms_manage_assignment a
-            LEFT JOIN cudos_topic t  ON t.topic_id  = a.topic_id
-            LEFT JOIN iems_section s ON s.id         = a.section_id
-            {base_filter}
-            ORDER BY a.lms_assignment_id DESC
-            LIMIT :limit OFFSET :offset
-            """
-        ),
-        {**params, "limit": page_size, "offset": offset},
-    ).mappings().all()
+        print(f"🔍 Filter: {base_filter}")
+        print(f"📊 Params: {params}")
 
-    return returnSuccess({"page": page, "page_size": page_size, "total": int(total), "items": [dict(r) for r in rows]})
+        total = db.execute(text(f"SELECT COUNT(*) FROM lms_manage_assignment a {base_filter}"), params).scalar() or 0
+        print(f"📊 Total records: {total}")
+        
+        offset = (page - 1) * page_size
+        
+        rows = db.execute(
+            text(
+                f"""
+                SELECT
+                    a.lms_assignment_id, a.assignment_name, a.additional_info, a.file_name, a.file_path,
+                    a.academic_batch_id, a.semester_id, a.crs_id, a.issue_date, a.due_date,
+                    a.status, a.assess_attain_flag, a.created_by, a.created_date,
+                    COALESCE(
+                        (SELECT GROUP_CONCAT(DISTINCT t.topic_title ORDER BY t.topic_title SEPARATOR ', ')
+                         FROM lms_map_assignment_upload sau
+                         INNER JOIN cudos_topic t ON t.topic_id = sau.topic_id
+                         WHERE sau.lms_assignment_id = a.lms_assignment_id
+                        ), ''
+                    ) AS topic_title,
+                    COALESCE(
+                        (SELECT GROUP_CONCAT(DISTINCT t.topic_code ORDER BY t.topic_code SEPARATOR ', ')
+                         FROM lms_map_assignment_upload sau
+                         INNER JOIN cudos_topic t ON t.topic_id = sau.topic_id
+                         WHERE sau.lms_assignment_id = a.lms_assignment_id
+                        ), ''
+                    ) AS topic_code,
+                    COALESCE(
+                        (SELECT GROUP_CONCAT(DISTINCT s.mt_details_name ORDER BY s.mt_details_name SEPARATOR ', ')
+                         FROM lms_map_assignment_upload sau
+                         INNER JOIN cudos_master_type_details s ON s.mt_details_id = sau.section_id
+                         WHERE sau.lms_assignment_id = a.lms_assignment_id
+                        ), ''
+                    ) AS section_name,
+                    (SELECT COUNT(*) FROM lms_map_assignment_to_students ms WHERE ms.lms_assignment_id = a.lms_assignment_id) AS shared_students_count
+                FROM lms_manage_assignment a
+                {base_filter}
+                ORDER BY a.lms_assignment_id DESC
+                LIMIT :limit OFFSET :offset
+                """
+            ),
+            {**params, "limit": page_size, "offset": offset},
+        ).mappings().all()
 
-
+        print(f"✅ Rows returned: {len(rows)}")
+        
+        result = {
+            "page": page, 
+            "page_size": page_size, 
+            "total": int(total), 
+            "items": [dict(r) for r in rows]
+        }
+        
+        return returnSuccess(result)
+        
+    except Exception as e:
+        print(f"❌ ERROR in get_assignments: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return returnException(f"Error fetching assignments: {str(e)}")
+    
 # Downloads the assignment file attached by the faculty creator.
 @router.get("/download/{assignment_id}")
 def download_assignment_file(assignment_id: int, db: Session = Depends(get_db)):
@@ -397,15 +677,14 @@ def get_my_assignments(
             a.created_by,
             a.created_date AS assignment_created_date,
             a.modified_date AS assignment_modified_date,
-            COALESCE(a.update_count, 0) AS update_count,
             COALESCE(t.topic_title, '') AS topic_title,
-            COALESCE(s.section, '') AS section_name,
+            COALESCE(s.mt_details_name, '') AS section_name,
             COALESCE(c.crs_code, '') AS crs_code,
             COALESCE(c.crs_title, '') AS crs_title
         FROM lms_map_assignment_to_students ms
         JOIN lms_manage_assignment a ON a.lms_assignment_id = ms.lms_assignment_id
         LEFT JOIN cudos_topic t ON t.topic_id = a.topic_id
-        LEFT JOIN iems_section s ON s.id = a.section_id
+        LEFT JOIN cudos_master_type_details s ON s.mt_details_id = a.section_id
         LEFT JOIN iems_courses c ON c.crs_id = a.crs_id
         WHERE ms.ssd_id = :student_id
     """
@@ -504,47 +783,61 @@ def get_assignment_details(assignment_id: int, db: Session = Depends(get_db)):
     if not assignment:
         return returnException("Assignment not found")
 
+    # Get section and topic from lms_map_assignment_upload
+    section_topic = db.execute(
+        text("""
+            SELECT 
+                MAX(section_id) AS section_id,
+                MAX(topic_id) AS topic_id
+            FROM lms_map_assignment_upload 
+            WHERE lms_assignment_id = :assignment_id
+        """),
+        {"assignment_id": assignment_id}
+    ).mappings().first()
+
+    # Convert to dict and add section_id and topic_id
+    assignment_dict = dict(assignment)
+    assignment_dict['section_id'] = section_topic['section_id'] if section_topic else None
+    assignment_dict['topic_id'] = section_topic['topic_id'] if section_topic else None
+
     try:
         bloom_rows = db.execute(text("SELECT bloom_id FROM lms_assignment_bloom_mapping WHERE lms_assignment_id = :assignment_id"), {"assignment_id": assignment_id}).mappings().all()
         bloom_ids = [row["bloom_id"] for row in bloom_rows]
     except Exception:
-        db.rollback()
         bloom_ids = []
 
     try:
         clo_rows = db.execute(text("SELECT clo_id FROM lms_assignment_clo_mapping WHERE lms_assignment_id = :assignment_id"), {"assignment_id": assignment_id}).mappings().all()
         clo_ids = [row["clo_id"] for row in clo_rows]
     except Exception:
-        db.rollback()
         clo_ids = []
 
     try:
         shared_students = db.execute(
-            text("SELECT ms.map_assignment_student_id, ms.ssd_id, ms.student_usn, ms.file_name, ms.file_path, ms.seen_on, ms.accept_rework_flag, ms.secured_marks, ms.remark, ms.assignment_justification, ms.current_comments, st.name, st.first_name, st.last_name FROM lms_map_assignment_to_students ms LEFT JOIN iems_students st ON st.student_id = ms.ssd_id WHERE ms.lms_assignment_id = :assignment_id ORDER BY ms.map_assignment_student_id DESC"),
+            text("""
+                SELECT 
+                    ms.map_assignment_student_id, ms.ssd_id, ms.student_usn, 
+                    ms.file_name, ms.file_path, ms.seen_on, 
+                    ms.accept_rework_flag, ms.secured_marks, ms.remark, 
+                    ms.assignment_justification, ms.current_comments, 
+                    st.name, st.first_name, st.last_name 
+                FROM lms_map_assignment_to_students ms 
+                LEFT JOIN iems_students st ON st.student_id = ms.ssd_id 
+                WHERE ms.lms_assignment_id = :assignment_id 
+                ORDER BY ms.map_assignment_student_id DESC
+            """),
             {"assignment_id": assignment_id},
         ).mappings().all()
         shared_students_list = [dict(r) for r in shared_students]
     except Exception:
-        db.rollback()
-        # Fallback: fetch with minimal columns in case some columns are missing
-        try:
-            shared_students = db.execute(
-                text("SELECT ms.map_assignment_student_id, ms.ssd_id, ms.student_usn, st.name, st.first_name, st.last_name FROM lms_map_assignment_to_students ms LEFT JOIN iems_students st ON st.student_id = ms.ssd_id WHERE ms.lms_assignment_id = :assignment_id ORDER BY ms.map_assignment_student_id DESC"),
-                {"assignment_id": assignment_id},
-            ).mappings().all()
-            shared_students_list = [dict(r) for r in shared_students]
-        except Exception:
-            db.rollback()
-            shared_students_list = []
+        shared_students_list = []
 
-    upload_rows = []
-    if _table_exists(db, "lms_map_assignment_upload"):
-        try:
-            upload_rows = db.execute(text("SELECT file_name, file_path FROM lms_map_assignment_upload WHERE lms_assignment_id = :assignment_id"), {"assignment_id": assignment_id}).mappings().all()
-        except Exception:
-            db.rollback()
-
-    return returnSuccess({"assignment": assignment, "bloom_ids": bloom_ids, "clo_ids": clo_ids, "shared_students": shared_students_list, "uploads": upload_rows})
+    return returnSuccess({
+        "assignment": assignment_dict, 
+        "bloom_ids": bloom_ids, 
+        "clo_ids": clo_ids, 
+        "shared_students": shared_students_list
+    })
 
 # Updates assignment details and replaces bloom/CLO/upload mappings.
 @router.put("/{assignment_id}")
@@ -554,7 +847,7 @@ def update_assignment(assignment_id: int, payload: AssignmentUpdateRequest, db: 
         return returnException("Assignment not found")
 
     try:
-        # Updates assignment master row with editable fields and increments update_count.
+        # Update assignment master row (without topic_id and section_id)
         db.execute(
             text(
                 """
@@ -567,15 +860,12 @@ def update_assignment(assignment_id: int, payload: AssignmentUpdateRequest, db: 
                     academic_batch_id = COALESCE(:academic_batch_id, academic_batch_id),
                     semester_id = COALESCE(:semester_id, semester_id),
                     crs_id = COALESCE(:crs_id, crs_id),
-                    section_id = COALESCE(:section_id, section_id),
-                    topic_id = COALESCE(:topic_id, topic_id),
                     issue_date = COALESCE(:issue_date, issue_date),
                     due_date = COALESCE(:due_date, due_date),
                     status = COALESCE(:status, status),
                     assess_attain_flag = COALESCE(:assess_attain_flag, assess_attain_flag),
                     modfified_by = :modified_by,
-                    modified_date = :modified_date,
-                    update_count = COALESCE(update_count, 0) + 1
+                    modified_date = :modified_date
                 WHERE lms_assignment_id = :assignment_id
                 """
             ),
@@ -587,8 +877,6 @@ def update_assignment(assignment_id: int, payload: AssignmentUpdateRequest, db: 
                 "academic_batch_id": payload.academic_batch_id,
                 "semester_id": payload.semester_id,
                 "crs_id": payload.crs_id,
-                "section_id": payload.section_id,
-                "topic_id": payload.topic_id,
                 "issue_date": payload.issue_date,
                 "due_date": payload.due_date,
                 "status": payload.status,
@@ -598,6 +886,56 @@ def update_assignment(assignment_id: int, payload: AssignmentUpdateRequest, db: 
                 "assignment_id": assignment_id,
             },
         )
+
+        # Update section mapping in lms_map_assignment_upload
+        if payload.section_id is not None:
+            # First, delete existing section mappings for this assignment
+            db.execute(
+                text("DELETE FROM lms_map_assignment_upload WHERE lms_assignment_id = :assignment_id AND section_id IS NOT NULL"),
+                {"assignment_id": assignment_id}
+            )
+            # Then insert new section mapping
+            if payload.section_id:
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO lms_map_assignment_upload 
+                        (lms_assignment_id, section_id, created_by, created_date)
+                        VALUES (:lms_assignment_id, :section_id, :created_by, :created_date)
+                        """
+                    ),
+                    {
+                        "lms_assignment_id": assignment_id,
+                        "section_id": payload.section_id,
+                        "created_by": payload.modified_by,
+                        "created_date": datetime.now(),
+                    }
+                )
+
+        # Update topic mapping in lms_map_assignment_upload
+        if payload.topic_id is not None:
+            # First, delete existing topic mappings for this assignment
+            db.execute(
+                text("DELETE FROM lms_map_assignment_upload WHERE lms_assignment_id = :assignment_id AND topic_id IS NOT NULL"),
+                {"assignment_id": assignment_id}
+            )
+            # Then insert new topic mapping
+            if payload.topic_id:
+                db.execute(
+                    text(
+                        """
+                        INSERT INTO lms_map_assignment_upload 
+                        (lms_assignment_id, topic_id, created_by, created_date)
+                        VALUES (:lms_assignment_id, :topic_id, :created_by, :created_date)
+                        """
+                    ),
+                    {
+                        "lms_assignment_id": assignment_id,
+                        "topic_id": payload.topic_id,
+                        "created_by": payload.modified_by,
+                        "created_date": datetime.now(),
+                    }
+                )
 
         # Replaces bloom mappings when bloom list is passed.
         if payload.bloom_ids is not None:
@@ -611,16 +949,13 @@ def update_assignment(assignment_id: int, payload: AssignmentUpdateRequest, db: 
             for clo_id in payload.clo_ids:
                 db.execute(text("INSERT INTO lms_assignment_clo_mapping (lms_assignment_id, clo_id, created_by, created_date) VALUES (:assignment_id, :clo_id, :created_by, :created_date)"), {"assignment_id": assignment_id, "clo_id": clo_id, "created_by": payload.modified_by, "created_date": datetime.now()})
 
-        # Replaces upload mappings when upload list is passed and table exists.
-        if payload.uploads is not None and _table_exists(db, "lms_map_assignment_upload"):
-            db.execute(text("DELETE FROM lms_map_assignment_upload WHERE lms_assignment_id = :assignment_id"), {"assignment_id": assignment_id})
-            for upload in payload.uploads:
-                db.execute(text("INSERT INTO lms_map_assignment_upload (lms_assignment_id, file_name, file_path, created_by, created_date) VALUES (:lms_assignment_id, :file_name, :file_path, :created_by, :created_date)"), {"lms_assignment_id": assignment_id, "file_name": upload.file_name, "file_path": upload.file_path, "created_by": payload.modified_by, "created_date": datetime.now()})
-
         db.commit()
         return returnSuccess({"lms_assignment_id": assignment_id}, "Assignment updated successfully")
     except Exception as exc:
         db.rollback()
+        print(f"Error updating assignment: {str(exc)}")
+        import traceback
+        traceback.print_exc()
         return returnException(f"Failed to update assignment: {str(exc)}")
 
 
