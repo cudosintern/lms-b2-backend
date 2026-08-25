@@ -47,6 +47,7 @@ class AssignmentCreateRequest(BaseModel):
     topic_id: Optional[int] = None
     issue_date: Optional[str] = None
     due_date: Optional[str] = None
+    marks: Optional[float] = None
     status: int = 1
     assess_attain_flag: int = 0
     created_by: int
@@ -69,6 +70,7 @@ class AssignmentUpdateRequest(BaseModel):
     topic_id: Optional[int] = None
     issue_date: Optional[str] = None
     due_date: Optional[str] = None
+    marks: Optional[float] = None
     status: Optional[int] = None
     assess_attain_flag: Optional[int] = None
     modified_by: int
@@ -361,14 +363,14 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
                 (
                     assignment_name, additional_info, file_name, file_path,
                     academic_batch_id, semester_id, crs_id,
-                    issue_date, due_date,
+                    issue_date, due_date, marks,
                     status, assess_attain_flag, created_by, created_date
                 )
                 VALUES
                 (
                     :assignment_name, :additional_info, :file_name, :file_path,
                     :academic_batch_id, :semester_id, :crs_id,
-                    :issue_date, :due_date,
+                    :issue_date, :due_date, :marks,
                     :status, :assess_attain_flag, :created_by, :created_date
                 )
                 """
@@ -383,6 +385,7 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
                 "crs_id": payload.crs_id,
                 "issue_date": payload.issue_date,
                 "due_date": payload.due_date,
+                "marks": payload.marks,  # ✅ ADD THIS LINE
                 "status": payload.status,
                 "assess_attain_flag": payload.assess_attain_flag,
                 "created_by": payload.created_by,
@@ -465,63 +468,6 @@ def create_assignment(payload: AssignmentCreateRequest, db: Session = Depends(ge
         traceback.print_exc()
         return returnException(f"Failed to create assignment: {str(exc)}")
 
-
-# Fetches paginated assignment list with optional filter criteria.
-# @router.get("/list")
-# def get_assignments(
-#     page: int = Query(default=1, ge=1),
-#     page_size: int = Query(default=20, ge=1, le=100),
-#     academic_batch_id: Optional[int] = Query(default=None),
-#     semester_id: Optional[int] = Query(default=None),
-#     crs_id: Optional[int] = Query(default=None),
-#     section_id: Optional[int] = Query(default=None),
-#     created_by: Optional[int] = Query(default=None),
-#     db: Session = Depends(get_db),
-# ):
-#     base_filter = " WHERE 1=1 "
-#     params = {}
-#     if academic_batch_id is not None:
-#         base_filter += " AND a.academic_batch_id = :academic_batch_id"
-#         params["academic_batch_id"] = academic_batch_id
-#     if semester_id is not None:
-#         base_filter += " AND a.semester_id = :semester_id"
-#         params["semester_id"] = semester_id
-#     if crs_id is not None:
-#         base_filter += " AND a.crs_id = :crs_id"
-#         params["crs_id"] = crs_id
-#     if created_by is not None:
-#         base_filter += " AND a.created_by = :created_by"
-#         params["created_by"] = created_by
-
-#     total = db.execute(text(f"SELECT COUNT(*) FROM lms_manage_assignment a {base_filter}"), params).scalar() or 0
-#     offset = (page - 1) * page_size
-    
-#     rows = db.execute(
-#         text(
-#             f"""
-#             SELECT
-#                 a.lms_assignment_id, a.assignment_name, a.additional_info, a.file_name, a.file_path,
-#                 a.academic_batch_id, a.semester_id, a.crs_id, a.issue_date, a.due_date,
-#                 a.status, a.assess_attain_flag, a.created_by, a.created_date,
-#                 a.section_id, a.topic_id,
-#                 COALESCE(a.update_count, 0) AS update_count,
-#                 COALESCE(t.topic_title, '') AS topic_title,
-#                 COALESCE(t.topic_code, '') AS topic_code,
-#                 COALESCE(s.mt_details_name, '') AS section_name,
-#                 (SELECT COUNT(*) FROM lms_map_assignment_to_students ms WHERE ms.lms_assignment_id = a.lms_assignment_id) AS shared_students_count
-#             FROM lms_manage_assignment a
-#             LEFT JOIN cudos_topic t ON t.topic_id = a.topic_id
-#             LEFT JOIN cudos_master_type_details s ON s.mt_details_id = a.section_id
-#             {base_filter}
-#             ORDER BY a.lms_assignment_id DESC
-#             LIMIT :limit OFFSET :offset
-#             """
-#         ),
-#         {**params, "limit": page_size, "offset": offset},
-#     ).mappings().all()
-
-#     return returnSuccess({"page": page, "page_size": page_size, "total": int(total), "items": [dict(r) for r in rows]})
-
 @router.get("/list")
 def get_assignments(
     page: int = Query(default=1, ge=1),
@@ -534,7 +480,6 @@ def get_assignments(
     db: Session = Depends(get_db),
 ):
     try:
-        print("=" * 60)
         print("📋 GET /list - Fetching assignments")
         print(f"📌 Parameters: page={page}, page_size={page_size}, academic_batch_id={academic_batch_id}, semester_id={semester_id}, crs_id={crs_id}, section_id={section_id}, created_by={created_by}")
         
@@ -576,27 +521,27 @@ def get_assignments(
                 f"""
                 SELECT
                     a.lms_assignment_id, a.assignment_name, a.additional_info, a.file_name, a.file_path,
-                    a.academic_batch_id, a.semester_id, a.crs_id, a.issue_date, a.due_date,
+                    a.academic_batch_id, a.semester_id, a.crs_id, a.issue_date, a.due_date, a.marks,
                     a.status, a.assess_attain_flag, a.created_by, a.created_date,
                     COALESCE(
                         (SELECT GROUP_CONCAT(DISTINCT t.topic_title ORDER BY t.topic_title SEPARATOR ', ')
-                         FROM lms_map_assignment_upload sau
-                         INNER JOIN cudos_topic t ON t.topic_id = sau.topic_id
-                         WHERE sau.lms_assignment_id = a.lms_assignment_id
+                        FROM lms_map_assignment_upload sau
+                        INNER JOIN cudos_topic t ON t.topic_id = sau.topic_id
+                        WHERE sau.lms_assignment_id = a.lms_assignment_id
                         ), ''
                     ) AS topic_title,
                     COALESCE(
                         (SELECT GROUP_CONCAT(DISTINCT t.topic_code ORDER BY t.topic_code SEPARATOR ', ')
-                         FROM lms_map_assignment_upload sau
-                         INNER JOIN cudos_topic t ON t.topic_id = sau.topic_id
-                         WHERE sau.lms_assignment_id = a.lms_assignment_id
+                        FROM lms_map_assignment_upload sau
+                        INNER JOIN cudos_topic t ON t.topic_id = sau.topic_id
+                        WHERE sau.lms_assignment_id = a.lms_assignment_id
                         ), ''
                     ) AS topic_code,
                     COALESCE(
                         (SELECT GROUP_CONCAT(DISTINCT s.mt_details_name ORDER BY s.mt_details_name SEPARATOR ', ')
-                         FROM lms_map_assignment_upload sau
-                         INNER JOIN cudos_master_type_details s ON s.mt_details_id = sau.section_id
-                         WHERE sau.lms_assignment_id = a.lms_assignment_id
+                        FROM lms_map_assignment_upload sau
+                        INNER JOIN cudos_master_type_details s ON s.mt_details_id = sau.section_id
+                        WHERE sau.lms_assignment_id = a.lms_assignment_id
                         ), ''
                     ) AS section_name,
                     (SELECT COUNT(*) FROM lms_map_assignment_to_students ms WHERE ms.lms_assignment_id = a.lms_assignment_id) AS shared_students_count
@@ -671,6 +616,7 @@ def get_my_assignments(
             a.file_path AS assignment_file_path,
             a.issue_date,
             a.due_date,
+            a.marks AS total_marks, 
             a.crs_id,
             a.section_id,
             a.topic_id,
@@ -779,7 +725,18 @@ def download_student_submission(map_id: int, db: Session = Depends(get_db)):
 # Fetches assignment full details for edit and review screens.
 @router.get("/{assignment_id}")
 def get_assignment_details(assignment_id: int, db: Session = Depends(get_db)):
-    assignment = db.execute(text("SELECT * FROM lms_manage_assignment WHERE lms_assignment_id = :assignment_id"), {"assignment_id": assignment_id}).mappings().first()
+    # assignment = db.execute(text("SELECT * FROM lms_manage_assignment WHERE lms_assignment_id = :assignment_id"), {"assignment_id": assignment_id}).mappings().first()
+    assignment = db.execute(
+        text("""
+            SELECT 
+                lms_assignment_id, assignment_name, additional_info, file_name, file_path,
+                academic_batch_id, semester_id, crs_id, issue_date, due_date, marks,
+                status, assess_attain_flag, created_by, created_date, modified_date
+            FROM lms_manage_assignment 
+            WHERE lms_assignment_id = :assignment_id
+        """), 
+        {"assignment_id": assignment_id}
+    ).mappings().first()
     if not assignment:
         return returnException("Assignment not found")
 
@@ -862,6 +819,7 @@ def update_assignment(assignment_id: int, payload: AssignmentUpdateRequest, db: 
                     crs_id = COALESCE(:crs_id, crs_id),
                     issue_date = COALESCE(:issue_date, issue_date),
                     due_date = COALESCE(:due_date, due_date),
+                    marks = COALESCE(:marks, marks),
                     status = COALESCE(:status, status),
                     assess_attain_flag = COALESCE(:assess_attain_flag, assess_attain_flag),
                     modfified_by = :modified_by,
@@ -879,6 +837,7 @@ def update_assignment(assignment_id: int, payload: AssignmentUpdateRequest, db: 
                 "crs_id": payload.crs_id,
                 "issue_date": payload.issue_date,
                 "due_date": payload.due_date,
+                "marks": payload.marks,
                 "status": payload.status,
                 "assess_attain_flag": payload.assess_attain_flag,
                 "modified_by": payload.modified_by,
@@ -1019,6 +978,7 @@ def get_shared_assignments(student_id: Optional[int] = Query(default=None), crea
             a.file_path AS assignment_file_path,
             a.issue_date,
             a.due_date,
+            a.marks AS total_marks,
             a.created_by
         FROM lms_map_assignment_to_students ms
         JOIN lms_manage_assignment a ON a.lms_assignment_id = ms.lms_assignment_id

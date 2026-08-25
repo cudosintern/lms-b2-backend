@@ -63,6 +63,8 @@ class QuizCreateRequest(BaseModel):
     created_by: int
     section_ids: list[int] = Field(default_factory=list)
     topic_ids: list[int] = Field(default_factory=list)
+    show_date: Optional[str] = None
+    show_time: Optional[str] = None
 
 
 # Carries payload for updating an existing quiz.
@@ -93,6 +95,8 @@ class QuizUpdateRequest(BaseModel):
     modified_by: int
     section_ids: Optional[list[int]] = None
     topic_ids: Optional[list[int]] = None
+    show_date: Optional[str] = None
+    show_time: Optional[str] = None
 
 
 # Carries payload for creating a quiz question.
@@ -589,6 +593,8 @@ def create_quiz(payload: QuizCreateRequest, db: Session = Depends(get_db)):
                 "status": payload.status,
                 "created_by": payload.created_by,
                 "created_date": datetime.now(),
+                "show_date": payload.show_date,
+                "show_time": payload.show_time
             },
         )
 
@@ -632,48 +638,166 @@ def create_quiz(payload: QuizCreateRequest, db: Session = Depends(get_db)):
         return returnException(f"Failed to create quiz: {str(exc)}")
 
 
-# Fetches paginated quiz list with start and share summary values.
 # @router.get("/list")
 # def get_quiz_list(
+#     academic_batch_id: int = Query(..., description="Curriculum/Batch ID"),
+#     semester_id: int = Query(..., description="Semester/Term ID"),
+#     crs_id: int = Query(..., description="Course ID"),
 #     page: int = Query(default=1, ge=1),
 #     page_size: int = Query(default=20, ge=1, le=100),
-#     crs_id: Optional[int] = Query(default=None),
-#     created_by: Optional[int] = Query(default=None),
+#     created_by: Optional[int] = Query(default=None, description="Filter by creator"),
+#     instructor_id: Optional[int] = Query(default=None, description="Filter by instructor for non-admin users"),
 #     db: Session = Depends(get_db),
 # ):
-#     base_filter = " WHERE 1=1 "
-#     params: dict[str, Any] = {}
-#     if crs_id is not None:
-#         base_filter += " AND q.crs_id = :crs_id"
-#         params["crs_id"] = crs_id
-#     if created_by is not None:
-#         base_filter += " AND q.created_by = :created_by"
-#         params["created_by"] = created_by
-
-#     total = db.execute(
-#         text(f"SELECT COUNT(*) FROM lms_manage_quiz q {base_filter}"),
-#         params,
-#     ).scalar() or 0
-
-#     offset = (page - 1) * page_size
-#     rows = db.execute(
-#         text(
-#             f"""
-#             SELECT
-#                 q.*,
-#                 (SELECT COUNT(*) FROM lms_quiz_questions qq WHERE qq.quiz_id = q.quiz_id) AS question_count,
-#                 (SELECT COUNT(*) FROM lms_quiz_student_mapping qs WHERE qs.quiz_id = q.quiz_id) AS student_count,
-#                 (SELECT COUNT(*) FROM lms_quiz_start_log ql WHERE ql.quiz_id = q.quiz_id) AS started_count,
-#                 (SELECT COUNT(*) FROM lms_quiz_student_answer qa WHERE qa.quiz_id = q.quiz_id) AS answer_count
-#             FROM lms_manage_quiz q
-#             {base_filter}
-#             ORDER BY q.quiz_id DESC
-#             LIMIT :limit OFFSET :offset
+#     """
+#     Get quiz list with details including quiz status
+#     """
+#     try:
+#         # Build the query
+#         query = """
+#             SELECT 
+#                 mq.*,
+#                 DATE_FORMAT(mq.show_date, '%%d-%%m-%%Y') as s_date,
+#                 DATE_FORMAT(mq.show_time, '%%h:%%i %%p') as s_time,
+#                 -- Total students mapped
+#                 (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) AS total_students,
+#                 -- Completed students (accept_rework_flag = 2)
+#                 (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id AND qsm.accept_rework_flag = 2) AS completed_students,
+#                 -- CLO mapping flag
+#                 CASE 
+#                     WHEN (SELECT COUNT(*) FROM lms_quiz_que_clo_mapping qcm WHERE qcm.quiz_id = mq.quiz_id) > 0 THEN 1 
+#                     ELSE 0 
+#                 END as clo_map,
+#                 -- Bloom mapping flag
+#                 CASE 
+#                     WHEN (SELECT COUNT(*) FROM lms_quiz_que_bloom_mapping qbm WHERE qbm.quiz_id = mq.quiz_id) > 0 THEN 1 
+#                     ELSE 0 
+#                 END as bloom_map,
+#                 -- Total marks
+#                 (SELECT COALESCE(SUM(marks), 0) FROM lms_quiz_questions qq WHERE qq.quiz_id = mq.quiz_id) as total_marks,
+#                 GROUP_CONCAT(DISTINCT t.topic_title SEPARATOR '<br/>') as topic,
+#                 GROUP_CONCAT(DISTINCT t.topic_id) as topic_id,
+#                 GROUP_CONCAT(DISTINCT mtd.mt_details_name SEPARATOR ', ') as section_names,
+#                 GROUP_CONCAT(DISTINCT qs.section_id) as section_ids,
+#                 CASE WHEN COUNT(sa.sqa_id) > 0 THEN 1 ELSE 0 END AS is_attempted,
+#                 (SELECT COUNT(*) FROM lms_quiz_questions qq WHERE qq.quiz_id = mq.quiz_id) AS question_count,
+#                 (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) AS student_count,
+#                 (SELECT COUNT(*) FROM lms_quiz_start_log qsl WHERE qsl.quiz_id = mq.quiz_id) AS started_count,
+#                 (SELECT COUNT(*) FROM lms_quiz_student_answer qsa WHERE qsa.quiz_id = mq.quiz_id) AS answer_count
+#             FROM lms_manage_quiz mq
+#             LEFT JOIN lms_quiz_section_mapping qs ON mq.quiz_id = qs.quiz_id
+#             LEFT JOIN cudos_master_type_details mtd ON qs.section_id = mtd.mt_details_id
+#             LEFT JOIN lms_quiz_topic_mapping qt ON mq.quiz_id = qt.quiz_id
+#             LEFT JOIN cudos_topic t ON qt.topic_id = t.topic_id
+#             LEFT JOIN lms_quiz_student_answer sa ON mq.quiz_id = sa.quiz_id
+#         """
+        
+#         params = {
+#             "academic_batch_id": academic_batch_id,
+#             "semester_id": semester_id,
+#             "crs_id": crs_id
+#         }
+        
+#         # Add WHERE conditions
+#         where_conditions = [
+#             "mq.academic_batch_id = :academic_batch_id",
+#             "mq.semester_id = :semester_id",
+#             "mq.crs_id = :crs_id"
+#         ]
+        
+#         if created_by is not None:
+#             where_conditions.append("mq.created_by = :created_by")
+#             params["created_by"] = created_by
+        
+#         # Instructor filter for non-admin users
+#         if instructor_id is not None:
+#             query += """
+#                 LEFT JOIN lms_map_instructor_topic o ON t.topic_id = o.topic_id
 #             """
-#         ),
-#         {**params, "limit": page_size, "offset": offset},
-#     ).mappings().all()
-#     return returnSuccess({"page": page, "page_size": page_size, "total": int(total), "items": rows})
+#             where_conditions.append("o.instructor_id = :instructor_id")
+#             params["instructor_id"] = instructor_id
+        
+#         query += " WHERE " + " AND ".join(where_conditions)
+        
+#         # Group by quiz_id
+#         query += " GROUP BY mq.quiz_id"
+        
+#         # Order by
+#         query += """
+#             ORDER BY 
+#                 STR_TO_DATE(mq.quiz_date, '%%d-%%m-%%Y') = CURDATE() DESC,
+#                 STR_TO_DATE(CONCAT(mq.quiz_date, ' ', mq.quiz_time), '%%d-%%m-%%Y %%h:%%i %%p') DESC,
+#                 mq.quiz_id DESC
+#         """
+        
+#         # Get total count
+#         count_query = f"SELECT COUNT(*) FROM ({query}) as subquery"
+#         total_result = db.execute(text(count_query), params)
+#         total = total_result.scalar() or 0
+        
+#         # Add pagination
+#         offset = (page - 1) * page_size
+#         query += " LIMIT :limit OFFSET :offset"
+#         params["limit"] = page_size
+#         params["offset"] = offset
+        
+#         # Execute main query
+#         rows = db.execute(text(query), params).mappings().all()
+        
+#         # Convert to list of dicts with quiz status
+#         result_items = []
+#         for row in rows:
+#             item = dict(row)
+            
+#             # Calculate quiz status (matching the MySQL function logic)
+#             total_students = int(item.get('total_students') or 0)
+#             completed_students = int(item.get('completed_students') or 0)
+            
+#             if total_students > 0 and completed_students < total_students:
+#                 item['quiz_status'] = 'In Progress'
+#                 item['quiz_status_color'] = 'orange'
+#                 item['quiz_status_html'] = '<p style="color:orange;">In Progress</p>'
+#                 item['quiz_status_value'] = 2
+#             elif total_students > 0 and total_students == completed_students:
+#                 item['quiz_status'] = 'Completed'
+#                 item['quiz_status_color'] = 'green'
+#                 item['quiz_status_html'] = '<p style="color:green;">Completed</p>'
+#                 item['quiz_status_value'] = 1
+#             else:
+#                 item['quiz_status'] = 'Not Initiated'
+#                 item['quiz_status_color'] = 'red'
+#                 item['quiz_status_html'] = '<p style="color:red;">Not Initiated</p>'
+#                 item['quiz_status_value'] = 0
+            
+#             # Convert None values to appropriate defaults
+#             item['topic'] = item.get('topic') or ''
+#             item['topic_id'] = item.get('topic_id') or ''
+#             item['section_names'] = item.get('section_names') or ''
+#             item['section_ids'] = item.get('section_ids') or ''
+#             item['total_marks'] = float(item.get('total_marks') or 0)
+#             item['question_count'] = int(item.get('question_count') or 0)
+#             item['student_count'] = int(item.get('student_count') or 0)
+#             item['started_count'] = int(item.get('started_count') or 0)
+#             item['answer_count'] = int(item.get('answer_count') or 0)
+#             item['is_attempted'] = int(item.get('is_attempted') or 0)
+#             item['clo_map'] = int(item.get('clo_map') or 0)
+#             item['bloom_map'] = int(item.get('bloom_map') or 0)
+#             item['total_students'] = total_students
+#             item['completed_students'] = completed_students
+            
+#             result_items.append(item)
+        
+#         return returnSuccess({
+#             "page": page,
+#             "page_size": page_size,
+#             "total": int(total),
+#             "items": result_items
+#         })
+        
+#     except Exception as e:
+#         print(f"Error in get_quiz_list: {str(e)}")
+#         return returnException(f"Failed to fetch quiz list: {str(e)}")
+
 
 @router.get("/list")
 def get_quiz_list(
@@ -687,46 +811,79 @@ def get_quiz_list(
     db: Session = Depends(get_db),
 ):
     """
-    Get quiz list with details including quiz status
+    Get quiz list with topics and sections
     """
     try:
-        # Build the query
+        # Build the query with topic and section data
         query = """
             SELECT 
                 mq.*,
-                DATE_FORMAT(mq.show_date, '%%d-%%m-%%Y') as s_date,
-                DATE_FORMAT(mq.show_time, '%%h:%%i %%p') as s_time,
-                -- Total students mapped
+                -- ✅ Topic names (comma separated)
+                GROUP_CONCAT(DISTINCT t.topic_title SEPARATOR ', ') as topic_names,
+                -- ✅ Topic IDs (comma separated)
+                GROUP_CONCAT(DISTINCT t.topic_id) as topic_ids,
+                -- ✅ Topic names with HTML line breaks (for legacy)
+                GROUP_CONCAT(DISTINCT t.topic_title SEPARATOR '<br/>') as topic,
+                -- ✅ Section names (comma separated)
+                GROUP_CONCAT(DISTINCT mtd.mt_details_name SEPARATOR ', ') as section_names,
+                -- ✅ Section IDs (comma separated)
+                GROUP_CONCAT(DISTINCT qs.section_id) as section_ids,
+                -- ✅ Total marks
+                (SELECT COALESCE(SUM(marks), 0) FROM lms_quiz_questions qq WHERE qq.quiz_id = mq.quiz_id) as total_marks,
+                -- ✅ Question count
+                (SELECT COUNT(*) FROM lms_quiz_questions qq WHERE qq.quiz_id = mq.quiz_id) AS question_count,
+                -- ✅ Student count
+                (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) AS student_count,
+                -- ✅ Started count
+                (SELECT COUNT(*) FROM lms_quiz_start_log qsl WHERE qsl.quiz_id = mq.quiz_id) AS started_count,
+                -- ✅ Answer count
+                (SELECT COUNT(*) FROM lms_quiz_student_answer qsa WHERE qsa.quiz_id = mq.quiz_id) AS answer_count,
+                -- ✅ Quiz status
+                CASE 
+                    WHEN (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) > 0 
+                    AND (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id AND qsm.accept_rework_flag = 2) 
+                        < (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) 
+                    THEN 'In Progress'
+                    WHEN (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) > 0 
+                    AND (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id AND qsm.accept_rework_flag = 2) 
+                        = (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) 
+                    THEN 'Completed'
+                    ELSE 'Not Initiated'
+                END as quiz_status,
+                -- ✅ Status color
+                CASE 
+                    WHEN (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) > 0 
+                    AND (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id AND qsm.accept_rework_flag = 2) 
+                        < (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) 
+                    THEN 'orange'
+                    WHEN (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) > 0 
+                    AND (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id AND qsm.accept_rework_flag = 2) 
+                        = (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) 
+                    THEN 'green'
+                    ELSE 'red'
+                END as quiz_status_color,
+                -- ✅ Total students
                 (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) AS total_students,
-                -- Completed students (accept_rework_flag = 2)
+                -- ✅ Completed students
                 (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id AND qsm.accept_rework_flag = 2) AS completed_students,
-                -- CLO mapping flag
+                -- ✅ CLO mapping flag
                 CASE 
                     WHEN (SELECT COUNT(*) FROM lms_quiz_que_clo_mapping qcm WHERE qcm.quiz_id = mq.quiz_id) > 0 THEN 1 
                     ELSE 0 
                 END as clo_map,
-                -- Bloom mapping flag
+                -- ✅ Bloom mapping flag
                 CASE 
                     WHEN (SELECT COUNT(*) FROM lms_quiz_que_bloom_mapping qbm WHERE qbm.quiz_id = mq.quiz_id) > 0 THEN 1 
                     ELSE 0 
-                END as bloom_map,
-                -- Total marks
-                (SELECT COALESCE(SUM(marks), 0) FROM lms_quiz_questions qq WHERE qq.quiz_id = mq.quiz_id) as total_marks,
-                GROUP_CONCAT(DISTINCT t.topic_title SEPARATOR '<br/>') as topic,
-                GROUP_CONCAT(DISTINCT t.topic_id) as topic_id,
-                GROUP_CONCAT(DISTINCT mtd.mt_details_name SEPARATOR ', ') as section_names,
-                GROUP_CONCAT(DISTINCT qs.section_id) as section_ids,
-                CASE WHEN COUNT(sa.sqa_id) > 0 THEN 1 ELSE 0 END AS is_attempted,
-                (SELECT COUNT(*) FROM lms_quiz_questions qq WHERE qq.quiz_id = mq.quiz_id) AS question_count,
-                (SELECT COUNT(*) FROM lms_quiz_student_mapping qsm WHERE qsm.quiz_id = mq.quiz_id) AS student_count,
-                (SELECT COUNT(*) FROM lms_quiz_start_log qsl WHERE qsl.quiz_id = mq.quiz_id) AS started_count,
-                (SELECT COUNT(*) FROM lms_quiz_student_answer qsa WHERE qsa.quiz_id = mq.quiz_id) AS answer_count
+                END as bloom_map
             FROM lms_manage_quiz mq
             LEFT JOIN lms_quiz_section_mapping qs ON mq.quiz_id = qs.quiz_id
             LEFT JOIN cudos_master_type_details mtd ON qs.section_id = mtd.mt_details_id
             LEFT JOIN lms_quiz_topic_mapping qt ON mq.quiz_id = qt.quiz_id
             LEFT JOIN cudos_topic t ON qt.topic_id = t.topic_id
-            LEFT JOIN lms_quiz_student_answer sa ON mq.quiz_id = sa.quiz_id
+            WHERE mq.academic_batch_id = :academic_batch_id
+                AND mq.semester_id = :semester_id
+                AND mq.crs_id = :crs_id
         """
         
         params = {
@@ -735,28 +892,22 @@ def get_quiz_list(
             "crs_id": crs_id
         }
         
-        # Add WHERE conditions
-        where_conditions = [
-            "mq.academic_batch_id = :academic_batch_id",
-            "mq.semester_id = :semester_id",
-            "mq.crs_id = :crs_id"
-        ]
-        
+        # Add created_by filter
         if created_by is not None:
-            where_conditions.append("mq.created_by = :created_by")
+            query += " AND mq.created_by = :created_by"
             params["created_by"] = created_by
         
-        # Instructor filter for non-admin users
+        # Add instructor filter for non-admin users
         if instructor_id is not None:
             query += """
-                LEFT JOIN lms_map_instructor_topic o ON t.topic_id = o.topic_id
+                AND EXISTS (
+                    SELECT 1 FROM lms_map_instructor_topic o 
+                    WHERE o.topic_id = t.topic_id 
+                    AND o.instructor_id = :instructor_id
+                )
             """
-            where_conditions.append("o.instructor_id = :instructor_id")
             params["instructor_id"] = instructor_id
         
-        query += " WHERE " + " AND ".join(where_conditions)
-        
-        # Group by quiz_id
         query += " GROUP BY mq.quiz_id"
         
         # Order by
@@ -781,34 +932,14 @@ def get_quiz_list(
         # Execute main query
         rows = db.execute(text(query), params).mappings().all()
         
-        # Convert to list of dicts with quiz status
+        # Convert to list of dicts
         result_items = []
         for row in rows:
             item = dict(row)
-            
-            # Calculate quiz status (matching the MySQL function logic)
-            total_students = int(item.get('total_students') or 0)
-            completed_students = int(item.get('completed_students') or 0)
-            
-            if total_students > 0 and completed_students < total_students:
-                item['quiz_status'] = 'In Progress'
-                item['quiz_status_color'] = 'orange'
-                item['quiz_status_html'] = '<p style="color:orange;">In Progress</p>'
-                item['quiz_status_value'] = 2
-            elif total_students > 0 and total_students == completed_students:
-                item['quiz_status'] = 'Completed'
-                item['quiz_status_color'] = 'green'
-                item['quiz_status_html'] = '<p style="color:green;">Completed</p>'
-                item['quiz_status_value'] = 1
-            else:
-                item['quiz_status'] = 'Not Initiated'
-                item['quiz_status_color'] = 'red'
-                item['quiz_status_html'] = '<p style="color:red;">Not Initiated</p>'
-                item['quiz_status_value'] = 0
-            
-            # Convert None values to appropriate defaults
+            # Ensure fields are not None
+            item['topic_names'] = item.get('topic_names') or ''
+            item['topic_ids'] = item.get('topic_ids') or ''
             item['topic'] = item.get('topic') or ''
-            item['topic_id'] = item.get('topic_id') or ''
             item['section_names'] = item.get('section_names') or ''
             item['section_ids'] = item.get('section_ids') or ''
             item['total_marks'] = float(item.get('total_marks') or 0)
@@ -816,12 +947,10 @@ def get_quiz_list(
             item['student_count'] = int(item.get('student_count') or 0)
             item['started_count'] = int(item.get('started_count') or 0)
             item['answer_count'] = int(item.get('answer_count') or 0)
-            item['is_attempted'] = int(item.get('is_attempted') or 0)
+            item['total_students'] = int(item.get('total_students') or 0)
+            item['completed_students'] = int(item.get('completed_students') or 0)
             item['clo_map'] = int(item.get('clo_map') or 0)
             item['bloom_map'] = int(item.get('bloom_map') or 0)
-            item['total_students'] = total_students
-            item['completed_students'] = completed_students
-            
             result_items.append(item)
         
         return returnSuccess({
@@ -956,6 +1085,8 @@ def update_quiz(quiz_id: int, payload: QuizUpdateRequest, db: Session = Depends(
                 "status": payload.status,
                 "modified_by": payload.modified_by,
                 "modified_date": datetime.now(),
+                "show_date" : payload.show_date,
+                "show_time" : payload.show_time
             },
         )
 
@@ -1202,115 +1333,104 @@ def delete_quiz_question(qq_id: int, db: Session = Depends(get_db)):
         return returnException(f"Failed to delete quiz question: {str(exc)}")
 
 
-# Shares a quiz with students fetched from the course-to-student mapping table.
 @router.post("/{quiz_id}/share")
-def share_quiz(quiz_id: int, payload: QuizShareRequest, db: Session = Depends(get_db)):
-    quiz = db.execute(
-        text("SELECT * FROM lms_manage_quiz WHERE quiz_id = :quiz_id"),
-        {"quiz_id": quiz_id},
-    ).mappings().first()
-    if not quiz:
-        return returnException("Quiz not found")
-
-    if _quiz_has_started(db, quiz_id):
-        return returnException("Quiz share is blocked because the quiz has already started")
-
-    mapping_columns = _get_table_columns(db, "cudos_map_courseto_student")
-    query = "SELECT * FROM cudos_map_courseto_student WHERE 1=1"
-    params: dict[str, Any] = {}
-
-    crs_id = _pick_value(dict(quiz), ["crs_id", "course_id"])
-    if crs_id is not None:
-        if "crs_id" in mapping_columns:
-            query += " AND crs_id = :crs_id"
-            params["crs_id"] = crs_id
-        elif "course_id" in mapping_columns:
-            query += " AND course_id = :crs_id"
-            params["crs_id"] = crs_id
-
-    section_ids = _fetch_quiz_section_ids(db, quiz_id)
-    if section_ids:
-        if "section_id" in mapping_columns:
-            section_clause = ", ".join(str(section_id) for section_id in section_ids)
-            query += f" AND section_id IN ({section_clause})"
-        elif "section" in mapping_columns:
-            sections = db.execute(
-                text("SELECT section FROM iems_section WHERE id IN :section_ids"),
-                {"section_ids": tuple(section_ids)},
-            ).fetchall()
-            values = [row[0] for row in sections if row[0] is not None]
-            if values:
-                joined = ", ".join(f"'{value}'" for value in values)
-                query += f" AND section IN ({joined})"
-
-    rows = db.execute(text(query), params).mappings().all()
-    inserted = 0
-    skipped = 0
-
+def share_quiz(
+    quiz_id: int, 
+    payload: dict,
+    db: Session = Depends(get_db)
+):
+    """
+    Share quiz with selected students only
+    """
     try:
-        # Creates quiz share rows for all matched students and skips duplicates.
-        for row in rows:
-            data = dict(row)
-            student_id = _pick_value(data, ["ssd_id", "student_id"])
-            student_usn = _pick_value(data, ["student_usn", "usn"])
-            if student_id is None:
-                skipped += 1
-                continue
+        # Check if quiz exists
+        quiz = db.execute(
+            text("SELECT * FROM lms_manage_quiz WHERE quiz_id = :quiz_id"),
+            {"quiz_id": quiz_id},
+        ).mappings().first()
+        
+        if not quiz:
+            return returnException("Quiz not found")
 
+        if _quiz_has_started(db, quiz_id):
+            return returnException("Quiz share is blocked because the quiz has already started")
+
+        # Get student_ids from payload
+        student_ids = payload.get('student_ids', [])
+        
+        # If no student_ids provided, return error
+        if not student_ids:
+            return returnException("No students selected for sharing")
+
+        inserted = 0
+        skipped = 0
+
+        # Only share with the selected student IDs
+        for student_id in student_ids:
+            # Check if already mapped
             existing = db.execute(
-                text("SELECT COUNT(*) FROM lms_quiz_student_mapping WHERE quiz_id = :quiz_id AND ssd_id = :student_id"),
+                text("""
+                    SELECT COUNT(*) 
+                    FROM lms_quiz_student_mapping 
+                    WHERE quiz_id = :quiz_id AND ssd_id = :student_id
+                """),
                 {"quiz_id": quiz_id, "student_id": student_id},
             ).scalar() or 0
-            if existing:
+            
+            if existing > 0:
                 skipped += 1
                 continue
 
-            _dynamic_insert(
-                db,
-                "lms_quiz_student_mapping",
+            # Get student USN for the mapping
+            student_usn = db.execute(
+                text("SELECT usno FROM iems_students WHERE student_id = :student_id"),
+                {"student_id": student_id}
+            ).scalar()
+
+            # ✅ Insert without created_by and created_date (they don't exist in your table)
+            db.execute(
+                text("""
+                    INSERT INTO lms_quiz_student_mapping 
+                    (quiz_id, ssd_id, student_usn) 
+                    VALUES (:quiz_id, :student_id, :student_usn)
+                """),
                 {
                     "quiz_id": quiz_id,
-                    "ssd_id": student_id,
-                    "student_usn": student_usn,
-                    "created_by": payload.created_by,
-                    "created_date": datetime.now(),
-                },
+                    "student_id": student_id,
+                    "student_usn": student_usn
+                }
             )
             inserted += 1
 
         db.commit()
-        return returnSuccess({"quiz_id": quiz_id, "inserted": inserted, "skipped": skipped}, "Quiz shared successfully")
+        
+        return returnSuccess(
+            {
+                "quiz_id": quiz_id, 
+                "inserted": inserted, 
+                "skipped": skipped,
+                "total": len(student_ids)
+            }, 
+            f"Quiz shared with {inserted} student(s)"
+        )
+        
     except Exception as exc:
         db.rollback()
+        print(f"Error in share_quiz: {str(exc)}")
         return returnException(f"Failed to share quiz: {str(exc)}")
-
-
-# Fetches student share details and secured marks for a quiz.
-# @router.get("/{quiz_id}/students")
-# def get_quiz_students(quiz_id: int, db: Session = Depends(get_db)):
-#     rows = db.execute(
-#         text(
-#             """
-#             SELECT
-#                 qs.*,
-#                 (SELECT COUNT(*) FROM lms_quiz_student_answer qa WHERE qa.quiz_id = qs.quiz_id AND qa.ssd_id = qs.ssd_id) AS answer_count
-#             FROM lms_quiz_student_mapping qs
-#             WHERE qs.quiz_id = :quiz_id
-#             ORDER BY quiz_student_map_id ASC
-#             """
-#         ),
-#         {"quiz_id": quiz_id},
-#     ).mappings().all()
-#     return returnSuccess({"quiz_id": quiz_id, "total": len(rows), "items": rows})
 
 
 @router.get("/{quiz_id}/students")
 def get_quiz_students(
     quiz_id: int,
+    academic_batch_id: int = Query(..., description="Curriculum/Batch ID"),
+    semester_id: int = Query(..., description="Semester/Term ID"),
+    crs_id: int = Query(..., description="Course ID"),
+    section_id: Optional[int] = Query(default=None, description="Section ID"),
     db: Session = Depends(get_db)
 ):
     """
-    Get students assigned to a quiz with their submission status
+    Get all students from the course/section with their quiz status
     """
     try:
         # First check if quiz exists
@@ -1322,80 +1442,102 @@ def get_quiz_students(
         if not quiz:
             return returnException("Quiz not found")
         
-        # Get students with their submission status
+        # Get total marks for this quiz
+        total_marks = db.execute(
+            text("SELECT COALESCE(SUM(marks), 0) FROM lms_quiz_questions WHERE quiz_id = :quiz_id"),
+            {"quiz_id": quiz_id}
+        ).scalar() or 0
+        
+        # Query using only existing tables and columns
         query = """
             SELECT 
-                qsm.quiz_student_map_id,
-                qsm.quiz_id,
-                qsm.ssd_id as student_id,
-                qsm.student_usn,
-                qsm.created_date as shared_date,
-                -- Get student details from iems_students
+                s.student_id,
                 s.usno,
                 s.first_name,
                 s.last_name,
                 s.section,
-                -- Check if student has started the quiz
+                -- Check if student is mapped to this quiz
                 CASE 
-                    WHEN qsl.quiz_start_log_id IS NOT NULL THEN 1 
+                    WHEN qsm.qs_map_id IS NOT NULL THEN 1 
                     ELSE 0 
-                END as has_started,
-                -- Check if student has submitted answers
+                END as is_mapped,
+                -- Mapping ID if exists
+                qsm.qs_map_id as mapping_id,
+                -- Check if student has submitted (using is_submitted flag)
                 CASE 
-                    WHEN qsa.sqa_id IS NOT NULL THEN 1 
+                    WHEN qsm.is_submitted = 1 THEN 1 
                     ELSE 0 
                 END as has_submitted,
-                -- Get submitted answers count
+                -- Submitted answers count (from lms_quiz_student_answer if it exists)
                 (
                     SELECT COUNT(*) 
                     FROM lms_quiz_student_answer qsa2 
-                    WHERE qsa2.quiz_id = qsm.quiz_id 
-                    AND qsa2.ssd_id = qsm.ssd_id
+                    WHERE qsa2.quiz_id = :quiz_id 
+                    AND qsa2.ssd_id = s.student_id
                 ) as answer_count,
-                -- Get secured marks
-                (
-                    SELECT COALESCE(SUM(marks_obtained), 0)
-                    FROM lms_quiz_student_answer qsa2 
-                    WHERE qsa2.quiz_id = qsm.quiz_id 
-                    AND qsa2.ssd_id = qsm.ssd_id
-                ) as secured_marks,
-                -- Get last submission time
-                (
-                    SELECT MAX(submitted_date)
-                    FROM lms_quiz_student_answer qsa2 
-                    WHERE qsa2.quiz_id = qsm.quiz_id 
-                    AND qsa2.ssd_id = qsm.ssd_id
-                ) as submitted_at,
-                -- Check accept/rework status
+                -- Secured marks
+                qsm.secured_marks as secured_marks,
+                -- Accept/rework status
                 qsm.accept_rework_flag,
-                qsm.remark
-            FROM lms_quiz_student_mapping qsm
-            LEFT JOIN iems_students s ON s.ssd_id = qsm.ssd_id
-            LEFT JOIN lms_quiz_start_log qsl ON qsl.quiz_id = qsm.quiz_id AND qsl.ssd_id = qsm.ssd_id
-            LEFT JOIN lms_quiz_student_answer qsa ON qsa.quiz_id = qsm.quiz_id AND qsa.ssd_id = qsm.ssd_id
-            WHERE qsm.quiz_id = :quiz_id
-            GROUP BY qsm.quiz_student_map_id
-            ORDER BY qsm.quiz_student_map_id ASC
+                qsm.remarks,
+                qsm.viewed_on as shared_date,
+                qsm.q_secured_marks as q_secured_marks
+            FROM iems_students s
+            -- Get course mapping for this student
+            INNER JOIN cudos_map_courseto_student cms 
+                ON cms.student_id = s.student_id
+                AND cms.academic_batch_id = :academic_batch_id
+                AND cms.semester_id = :semester_id
+                AND cms.crs_id = :crs_id
+            -- Left join with quiz mapping
+            LEFT JOIN lms_quiz_student_mapping qsm 
+                ON qsm.ssd_id = s.student_id 
+                AND qsm.quiz_id = :quiz_id
+            WHERE 1=1
         """
         
-        result = db.execute(text(query), {"quiz_id": quiz_id}).mappings().all()
+        params = {
+            "quiz_id": quiz_id,
+            "academic_batch_id": academic_batch_id,
+            "semester_id": semester_id,
+            "crs_id": crs_id
+        }
+        
+        # Add section filter if provided
+        if section_id is not None:
+            query += " AND cms.section_id = :section_id"
+            params["section_id"] = section_id
+        
+        query += " GROUP BY s.student_id ORDER BY s.usno ASC"
+        
+        result = db.execute(text(query), params).mappings().all()
         
         # Transform the result
         students = []
         for row in result:
             student = dict(row)
-            # Add status based on submission
-            if student.get('has_submitted'):
-                student['status'] = 'Submitted'
-            elif student.get('has_started'):
-                student['status'] = 'Started'
+            
+            # Determine status based on available data
+            if student.get('is_mapped'):
+                if student.get('has_submitted') or student.get('answer_count', 0) > 0:
+                    student['status'] = 'Submitted'
+                    # Calculate total secured marks from q_secured_marks or secured_marks
+                    student['secured_marks'] = student.get('q_secured_marks') or student.get('secured_marks') or 0
+                else:
+                    student['status'] = 'Not Started'
+                    student['secured_marks'] = 0
             else:
-                student['status'] = 'Not Started'
+                student['status'] = 'Not Shared'
+                student['secured_marks'] = 0
             
             # Format name
             student['student_name'] = f"{student.get('first_name', '')} {student.get('last_name', '')}".strip() or student.get('usno', '')
+            student['total_marks'] = total_marks
             
-            # Remove sensitive fields if needed
+            # Ensure secured_marks is not None
+            if student.get('secured_marks') is None:
+                student['secured_marks'] = 0
+            
             students.append(student)
         
         return returnSuccess({
@@ -1407,3 +1549,80 @@ def get_quiz_students(
     except Exception as e:
         print(f"Error in get_quiz_students: {str(e)}")
         return returnException(f"Failed to fetch quiz students: {str(e)}")
+
+# Deletes a quiz and ALL its related data (including student mappings).
+@router.delete("/{quiz_id}")
+def delete_quiz(quiz_id: int, db: Session = Depends(get_db)):
+    print(f"🔥 DELETE ROUTE HIT for quiz_id: {quiz_id}")
+    # Check if the quiz exists
+    quiz_exists = db.execute(
+        text("SELECT quiz_id FROM lms_manage_quiz WHERE quiz_id = :quiz_id"),
+        {"quiz_id": quiz_id},
+    ).scalar()
+    if not quiz_exists:
+        return returnException("Quiz not found")
+
+    try:
+        # 1. Delete Student Mappings (IMPORTANT: Must be done before deleting the quiz)
+        db.execute(
+            text("DELETE FROM lms_quiz_student_mapping WHERE quiz_id = :quiz_id"),
+            {"quiz_id": quiz_id},
+        )
+
+        # 2. Delete Section Mappings
+        db.execute(
+            text("DELETE FROM lms_quiz_section_mapping WHERE quiz_id = :quiz_id"),
+            {"quiz_id": quiz_id},
+        )
+
+        # 3. Delete Topic Mappings
+        db.execute(
+            text("DELETE FROM lms_quiz_topic_mapping WHERE quiz_id = :quiz_id"),
+            {"quiz_id": quiz_id},
+        )
+
+        # 4. Delete all question options for questions in this quiz
+        db.execute(
+            text("""
+                DELETE FROM lms_quiz_que_options 
+                WHERE qq_id IN (SELECT qq_id FROM lms_quiz_questions WHERE quiz_id = :quiz_id)
+            """),
+            {"quiz_id": quiz_id},
+        )
+
+        # 5. Delete CLO mappings
+        # db.execute(
+        #     text("""
+        #         DELETE FROM lms_quiz_que_clo_mapping 
+        #         WHERE qq_id IN (SELECT qq_id FROM lms_quiz_questions WHERE quiz_id = :quiz_id)
+        #     """),
+        #     {"quiz_id": quiz_id},
+        # )
+
+        # # 6. Delete Bloom mappings
+        # db.execute(
+        #     text("""
+        #         DELETE FROM lms_quiz_que_bloom_mapping 
+        #         WHERE qq_id IN (SELECT qq_id FROM lms_quiz_questions WHERE quiz_id = :quiz_id)
+        #     """),
+        #     {"quiz_id": quiz_id},
+        # )
+
+        # 7. Delete the questions themselves
+        db.execute(
+            text("DELETE FROM lms_quiz_questions WHERE quiz_id = :quiz_id"),
+            {"quiz_id": quiz_id},
+        )
+
+        # 8. Finally, delete the main quiz itself
+        db.execute(
+            text("DELETE FROM lms_manage_quiz WHERE quiz_id = :quiz_id"),
+            {"quiz_id": quiz_id},
+        )
+
+        db.commit()
+        return returnSuccess({"quiz_id": quiz_id}, "Quiz and all associated records deleted successfully")
+    
+    except Exception as exc:
+        db.rollback()
+        return returnException(f"Failed to delete quiz: {str(exc)}")
