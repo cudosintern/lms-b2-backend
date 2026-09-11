@@ -5,6 +5,7 @@ from fastapi import (
     Depends
 )
 
+from sqlalchemy import and_, or_
 from sqlalchemy.orm import Session
 
 from app.core.database import get_db
@@ -26,12 +27,94 @@ from app.db.models import (
     IEMStudents,
     IEMSemester,
     IEMSAcademicBatch,
-    IEMSUsers
+    IEMSUsers,
+    Curriculum,
+    IEMSCurriculum,
+    IEMSCrclmTerm
 )
 
 from .lms_issues_observations_report_schema import *
 
 router = APIRouter()
+
+# ==========================================================
+# GET CURRICULUM & TERM BY ACADEMIC BATCH
+# ==========================================================
+@router.get("/get_crclm_term/{academic_batch_id}")
+def get_crclm_term(
+    academic_batch_id: int,
+    db: Session = Depends(get_db)
+):
+
+    try:
+
+        academic_batch = db.query(
+            IEMSAcademicBatch
+        ).filter(
+            IEMSAcademicBatch.academic_batch_id ==
+            academic_batch_id
+        ).first()
+
+        if not academic_batch:
+
+            return returnException(
+                "Academic Batch not found."
+            )
+
+        semesters = db.query(
+            IEMSemester
+        ).filter(
+            IEMSemester.academic_batch_id ==
+            academic_batch_id
+        ).order_by(
+            IEMSemester.semester.asc()
+        ).all()
+
+        terms = []
+        seen_term_ids = set()
+
+        for row in semesters:
+
+            if row.semester_id in seen_term_ids:
+                continue
+
+            seen_term_ids.add(
+                row.semester_id
+            )
+
+            terms.append({
+                "term_id":
+                    row.semester_id,
+
+                "term_name":
+                    row.semester_desc
+                    or row.term_name
+                    or f"Semester {row.semester}"
+            })
+
+        if not terms:
+
+            return returnSuccess(
+                [],
+                "No term mapping found for the selected academic batch."
+            )
+
+        result = [{
+            "academic_batch_id":
+                academic_batch.academic_batch_id,
+
+            "curriculum_name":
+                academic_batch.academic_batch_desc,
+
+            "terms":
+                terms
+        }]
+
+        return returnSuccess(result)
+
+    except Exception as e:
+
+        return returnException(str(e))
 
 # ==========================================================
 # GET STUDENT DETAILS BY USN
@@ -214,6 +297,9 @@ def get_issue_observation(
 
             "mentor_status":
                 report.mentor_status,
+
+            "mentor_agreed_date":
+                report.mentor_agreed_date,
 
             "mentee_status":
                 report.mentee_status,
@@ -616,6 +702,8 @@ def mentor_agree(
             )
 
         report.mentor_status = req.mentor_status
+
+        report.mentor_agreed_date = datetime.now()
 
         report.modified_by = current_user["user_id"]
 
