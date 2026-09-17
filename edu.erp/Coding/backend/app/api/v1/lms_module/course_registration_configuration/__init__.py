@@ -1,0 +1,1 @@
+"""Course registration configuration module."""

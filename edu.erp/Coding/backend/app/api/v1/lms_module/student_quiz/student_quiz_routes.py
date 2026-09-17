@@ -12,17 +12,63 @@ from .student_quiz_schema import StudentQuizSubmitRequest
 router = APIRouter(tags=["Student Quiz"])
 
 
+@router.get("/dropdowns")
+def get_student_quiz_dropdowns(
+    student_id: int = Query(..., gt=0),
+    db: Session = Depends(get_db),
+):
+    # Enrollment metadata is independent of whether a quiz has been assigned.
+    batches = db.execute(text("""
+        SELECT ab.academic_batch_id, ab.academic_batch_desc
+        FROM iems_students s
+        JOIN iems_academic_batch ab ON ab.academic_batch_id = s.academic_batch_id
+        WHERE s.student_id = :student_id
+    """), {"student_id": student_id}).mappings().all()
+    terms = db.execute(text("""
+        SELECT sem.semester_id, sem.semester, sem.academic_batch_id
+        FROM iems_semester sem
+        JOIN iems_students s ON s.academic_batch_id = sem.academic_batch_id
+        WHERE s.student_id = :student_id
+        ORDER BY sem.semester_id
+    """), {"student_id": student_id}).mappings().all()
+    enrollments = db.execute(text("""
+        SELECT DISTINCT cms.academic_batch_id, cms.semester_id, cms.crs_id,
+            c.crs_code, c.crs_title, cms.section_id,
+            sec.mt_details_name AS section_name
+        FROM cudos_map_courseto_student cms
+        JOIN iems_students s ON s.student_id = cms.student_id
+            AND s.academic_batch_id = cms.academic_batch_id
+        JOIN iems_courses c ON c.crs_id = cms.crs_id
+        LEFT JOIN cudos_master_type_details sec ON sec.mt_details_id = cms.section_id
+        WHERE cms.student_id = :student_id
+        ORDER BY c.crs_code, cms.section_id
+    """), {"student_id": student_id}).mappings().all()
+    return returnSuccess({
+        "batches": [dict(row) for row in batches],
+        "semesters": [dict(row) for row in terms],
+        "enrollments": [dict(row) for row in enrollments],
+    })
+
+
 # ── My Quizzes: list all quizzes shared to this student ──────────────────────
 @router.get("/my-quizzes")
 def get_student_quizzes(
-    student_id: int = Query(..., description="student_id of the logged-in student"),
+    student_id: int = Query(..., gt=0, description="student_id of the logged-in student"),
     academic_batch_id: Optional[int] = Query(default=None),
     semester_id: Optional[int] = Query(default=None),
     crs_id: Optional[int] = Query(default=None),
+    section_id: Optional[int] = Query(default=None),
     db: Session = Depends(get_db),
 ):
-    filters = "WHERE qs.ssd_id = :student_id"
-    params: dict[str, Any] = {"student_id": student_id}
+    filters = """WHERE qs.ssd_id = :student_id
+        AND EXISTS (SELECT 1 FROM iems_students s
+            WHERE s.student_id = :student_id AND s.academic_batch_id = q.academic_batch_id)
+        AND EXISTS (SELECT 1 FROM cudos_map_courseto_student cms
+            WHERE cms.student_id = :student_id
+              AND cms.academic_batch_id = q.academic_batch_id
+              AND cms.semester_id = q.semester_id AND cms.crs_id = q.crs_id
+              AND (:section_id IS NULL OR cms.section_id = :section_id))"""
+    params: dict[str, Any] = {"student_id": student_id, "section_id": section_id}
 
     if academic_batch_id is not None:
         filters += " AND q.academic_batch_id = :academic_batch_id"
@@ -33,6 +79,9 @@ def get_student_quizzes(
     if crs_id is not None:
         filters += " AND q.crs_id = :crs_id"
         params["crs_id"] = crs_id
+    if section_id is not None:
+        filters += """ AND EXISTS (SELECT 1 FROM lms_quiz_section_mapping qsec
+            WHERE qsec.quiz_id = q.quiz_id AND qsec.section_id = :section_id)"""
 
     query = f"""
         SELECT

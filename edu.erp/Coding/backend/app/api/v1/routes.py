@@ -117,6 +117,7 @@ from app.api.v1.lms_module.attendance_status_report import router as attendance_
 
 # Import all module routers
 from app.api.v1.lms_module.timetable.timetable import router as timetable_router
+from app.api.v1.lms_module.attendance import router as attendance_router
 
 # These were referenced in one version of the file.
 # Kept using the same module-naming convention as the other feature routers.
@@ -154,6 +155,9 @@ router.include_router(mentor_list_router, prefix="/mentoring", tags=["LMS-Mentor
 router.include_router(mentoring_router, prefix="/mentoring", tags=["LMS-Mentoring"])
 
 router.include_router(timetable_router, prefix="/timetable", tags=["LMS-Timetable"])
+router.include_router(attendance_router, prefix="/attendance", tags=["LMS-Attendance"])
+from app.api.v1.lms_module.student_attendance_report import router as student_attendance_report_router
+router.include_router(student_attendance_report_router, prefix="/student_attendance_report")
 
 # router.include_router(program.router, prefix="/program", tags=["EMS-configuration"])
 # router.include_router(
@@ -673,3 +677,13 @@ router.include_router(my_class_router, prefix="/my-class", tags=["My Class"])
 
 from app.api.v1.lms_module.quiz_report import router as quiz_report_router
 router.include_router(quiz_report_router, prefix="/quiz-report", tags=["Student Quiz Report"])
+
+# Course registration configuration migration
+from app.api.v1.lms_module.course_registration_configuration.router import router as course_registration_configuration_router
+router.include_router(course_registration_configuration_router)
+
+from app.api.v1.lms_module.daily_class_report import router as daily_class_report_router
+router.include_router(daily_class_report_router, prefix="/daily-class-report")
+
+from app.api.v1.lms_module.consolidated_attendance_report import router as consolidated_attendance_report_router
+router.include_router(consolidated_attendance_report_router)

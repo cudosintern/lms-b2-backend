@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from app.core.database import get_db
 from .cons_absentees_report_schema import *
@@ -82,41 +82,60 @@ def get_terms(curriculum_id: int, db: Session = Depends(get_db)):
             semester_id AS id,
             semester_desc AS name
         FROM iems_semester
+        WHERE academic_batch_id = :curriculum
         ORDER BY semester
-    """)).fetchall()
+    """), {"curriculum": curriculum_id}).fetchall()
 
     return [dict(row._mapping) for row in result]
 
 @router.get("/sections/{semester_id}")
 def get_sections(semester_id: int, db: Session = Depends(get_db)):
     result = db.execute(text("""
-        SELECT id, section AS name
-        FROM iems_section
-        WHERE semester_id = :term
-    """), {"term": semester_id}).fetchall()
+        SELECT DISTINCT sec.mt_details_id AS id, sec.mt_details_name AS name
+        FROM cudos_map_courseto_course_instructor m
+        JOIN cudos_master_type_details sec ON sec.mt_details_id = m.section_id
+        JOIN iems_semester sem ON sem.semester_id = m.semester_id
+            AND sem.academic_batch_id = m.academic_batch_id
+        WHERE sem.semester_id = :term
+        ORDER BY sec.mt_details_name
+    """), {"term": semester_id}).mappings().all()
+    return [dict(row) for row in result]
 
-    return [{"id": row[0], "name": row[1]} for row in result]
-# --------------------------------------------------
-# 2. DEFAULT DATE API
-# --------------------------------------------------
 
 @router.get("/date-info")
-def get_date_info(db: Session = Depends(get_db)):
-
-    latest_date = db.execute(text("""
-        SELECT MAX(attendance_date) as latest_date
-        FROM lms_manage_attendance
-    """)).scalar()
-
-    scheduled_dates = db.execute(text("""
-        SELECT DISTINCT attendance_date
-        FROM lms_manage_attendance
-    """)).fetchall()
-
-    return {
-        "latest_attendance_date": latest_date,
-        "scheduled_dates": [d[0] for d in scheduled_dates]
-    }
+def get_date_info(
+    department_ids: List[int] = Query(default=[]),
+    program_ids: List[int] = Query(default=[]),
+    curriculum_ids: List[int] = Query(default=[]),
+    semester_ids: List[int] = Query(default=[]),
+    section_ids: List[int] = Query(default=[]),
+    db: Session = Depends(get_db),
+):
+    query = """
+        SELECT DISTINCT ma.attendance_date
+        FROM lms_manage_attendance ma
+        JOIN iems_academic_batch ab ON ab.academic_batch_id = ma.academic_batch_id
+        JOIN iems_program p ON p.pgm_id = ab.pgm_id
+        WHERE ma.status IN (1, 2)
+        AND STR_TO_DATE(ma.attendance_date, '%Y-%m-%d') IS NOT NULL
+    """
+    params = {}
+    for name, column, values in (
+        ("department_ids", "p.dept_id", department_ids),
+        ("program_ids", "p.pgm_id", program_ids),
+        ("curriculum_ids", "ma.academic_batch_id", curriculum_ids),
+        ("semester_ids", "ma.semester_id", semester_ids),
+        ("section_ids", "ma.section_id", section_ids),
+    ):
+        if values:
+            query += f" AND {column} IN :{name}"
+            params[name] = values
+    query += " ORDER BY ma.attendance_date"
+    stmt = text(query)
+    if params:
+        stmt = stmt.bindparams(*(bindparam(name, expanding=True) for name in params))
+    dates = [row[0] for row in db.execute(stmt, params).fetchall()]
+    return {"latest_attendance_date": dates[-1] if dates else None, "scheduled_dates": dates}
 
 
 # --------------------------------------------------
@@ -131,24 +150,24 @@ def get_report(payload: ReportRequest, db: Session = Depends(get_db)):
     d.dept_name AS department,
     s.term_name AS term,
     c.crs_title AS course,
-    sec.section AS section,
-    COUNT(sa.stud_attendance_id) AS absent_count,
+    sec.mt_details_name AS section,
+    COUNT(CASE WHEN sa.refer_absent_status > 0 THEN sa.stud_attendance_id END) AS absent_count,
     c.crs_id AS course_id,
-    sec.id AS section_id
+    sec.mt_details_id AS section_id
 
     FROM lms_manage_attendance ma
 
-    JOIN lms_map_student_attendance sa
+    LEFT JOIN lms_map_student_attendance sa
         ON sa.attendance_id = ma.attendance_id
 
-    JOIN iems_section sec
-        ON sec.id = ma.section_id
+    JOIN cudos_master_type_details sec
+        ON sec.mt_details_id = ma.section_id
 
     JOIN iems_semester s
-        ON s.semester_id = sec.semester_id
+        ON s.semester_id = ma.semester_id
 
     JOIN iems_academic_batch ab
-        ON ab.academic_batch_id = s.academic_batch_id
+        ON ab.academic_batch_id = ma.academic_batch_id
 
     JOIN iems_program p
         ON p.pgm_id = ab.pgm_id
@@ -156,13 +175,10 @@ def get_report(payload: ReportRequest, db: Session = Depends(get_db)):
     JOIN iems_department d
         ON d.dept_id = p.dept_id
 
-    JOIN iems_students st
-        ON st.usno = sa.student_usn
-
     JOIN iems_courses c
         ON c.crs_id = ma.crs_id
 
-    WHERE sa.attendance_status = 'ABSENT'
+    WHERE ma.status IN (1, 2)
 
     AND STR_TO_DATE(ma.attendance_date, '%Y-%m-%d')
         BETWEEN :start AND :end
@@ -191,12 +207,12 @@ def get_report(payload: ReportRequest, db: Session = Depends(get_db)):
         params["sem"] = payload.semester_ids
 
     if payload.section_ids is not None:
-        query += " AND sec.id IN :sec"
+        query += " AND sec.mt_details_id IN :sec"
         params["sec"] = payload.section_ids
 
     # ✅ ONLY ONE GROUP BY (at the end)
     query += """
-    GROUP BY d.dept_name, s.term_name, c.crs_title, sec.section
+    GROUP BY d.dept_id, d.dept_name, ab.academic_batch_id, s.semester_id, s.term_name, c.crs_id, c.crs_title, sec.mt_details_id, sec.mt_details_name
     """
 
     stmt = text(query)
@@ -204,19 +220,19 @@ def get_report(payload: ReportRequest, db: Session = Depends(get_db)):
     # ✅ Bind expanding params ONLY if they exist
     bind_params = []
 
-    if payload.department_ids:
+    if payload.department_ids is not None:
         bind_params.append(bindparam("dept_ids", expanding=True))
 
-    if payload.program_ids:
+    if payload.program_ids is not None:
         bind_params.append(bindparam("prog", expanding=True))
 
-    if payload.curriculum_ids:
+    if payload.curriculum_ids is not None:
         bind_params.append(bindparam("cur", expanding=True))
 
-    if payload.semester_ids:
+    if payload.semester_ids is not None:
         bind_params.append(bindparam("sem", expanding=True))
 
-    if payload.section_ids:
+    if payload.section_ids is not None:
         bind_params.append(bindparam("sec", expanding=True))
 
     if bind_params:
@@ -241,13 +257,13 @@ def get_drilldown(payload: DrilldownRequest, db: Session = Depends(get_db)):
 
 FROM lms_manage_attendance ma
 
-JOIN lms_map_student_attendance sa
+LEFT JOIN lms_map_student_attendance sa
     ON sa.attendance_id = ma.attendance_id
 
 JOIN iems_students st
-    ON st.usno = sa.student_usn   -- ✅ FIXED
+    ON st.student_id = sa.ssd_id
 
-WHERE sa.attendance_status = 'ABSENT'   -- ✅ FIXED
+WHERE ma.status IN (1, 2) AND sa.refer_absent_status > 0
 
 AND ma.crs_id = :course
 AND ma.section_id = :section
@@ -273,19 +289,19 @@ def export_absentees_xls(data: ReportRequest, db: Session = Depends(get_db)):
             d.dept_name AS department,
             s.term_name AS term,
             c.crs_title AS course,
-            sec.section AS section,
-            COUNT(sa.stud_attendance_id) AS absent_count
+            sec.mt_details_name AS section,
+            COUNT(CASE WHEN sa.refer_absent_status > 0 THEN sa.stud_attendance_id END) AS absent_count
 
         FROM lms_manage_attendance ma
-        JOIN lms_map_student_attendance sa ON sa.attendance_id = ma.attendance_id
-        JOIN iems_section sec ON sec.id = ma.section_id
-        JOIN iems_semester s ON s.semester_id = sec.semester_id
-        JOIN iems_academic_batch ab ON ab.academic_batch_id = s.academic_batch_id
+        LEFT JOIN lms_map_student_attendance sa ON sa.attendance_id = ma.attendance_id
+        JOIN cudos_master_type_details sec ON sec.mt_details_id = ma.section_id
+        JOIN iems_semester s ON s.semester_id = ma.semester_id
+        JOIN iems_academic_batch ab ON ab.academic_batch_id = ma.academic_batch_id
         JOIN iems_program p ON p.pgm_id = ab.pgm_id
         JOIN iems_department d ON d.dept_id = p.dept_id
         JOIN iems_courses c ON c.crs_id = ma.crs_id
 
-        WHERE sa.attendance_status = 'ABSENT'
+        WHERE ma.status IN (1, 2)
         AND STR_TO_DATE(ma.attendance_date, '%Y-%m-%d')
         BETWEEN :start AND :end
         """
@@ -309,9 +325,9 @@ def export_absentees_xls(data: ReportRequest, db: Session = Depends(get_db)):
             base_query += f" AND s.semester_id IN ({','.join(map(str, data.semester_ids))})"
 
         if data.section_ids:
-            base_query += f" AND sec.id IN ({','.join(map(str, data.section_ids))})"
+            base_query += f" AND sec.mt_details_id IN ({','.join(map(str, data.section_ids))})"
 
-        base_query += " GROUP BY d.dept_name, s.term_name, c.crs_title, sec.section"
+        base_query += " GROUP BY d.dept_id, d.dept_name, ab.academic_batch_id, s.semester_id, s.term_name, c.crs_id, c.crs_title, sec.mt_details_id, sec.mt_details_name"
 
         result = db.execute(text(base_query), params).mappings().all()
 
@@ -367,19 +383,19 @@ def export_absentees_pdf(data: ReportRequest, db: Session = Depends(get_db)):
             d.dept_name AS department,
             s.term_name AS term,
             c.crs_title AS course,
-            sec.section AS section,
-            COUNT(sa.stud_attendance_id) AS absent_count
+            sec.mt_details_name AS section,
+            COUNT(CASE WHEN sa.refer_absent_status > 0 THEN sa.stud_attendance_id END) AS absent_count
 
         FROM lms_manage_attendance ma
-        JOIN lms_map_student_attendance sa ON sa.attendance_id = ma.attendance_id
-        JOIN iems_section sec ON sec.id = ma.section_id
-        JOIN iems_semester s ON s.semester_id = sec.semester_id
-        JOIN iems_academic_batch ab ON ab.academic_batch_id = s.academic_batch_id
+        LEFT JOIN lms_map_student_attendance sa ON sa.attendance_id = ma.attendance_id
+        JOIN cudos_master_type_details sec ON sec.mt_details_id = ma.section_id
+        JOIN iems_semester s ON s.semester_id = ma.semester_id
+        JOIN iems_academic_batch ab ON ab.academic_batch_id = ma.academic_batch_id
         JOIN iems_program p ON p.pgm_id = ab.pgm_id
         JOIN iems_department d ON d.dept_id = p.dept_id
         JOIN iems_courses c ON c.crs_id = ma.crs_id
 
-        WHERE sa.attendance_status = 'ABSENT'
+        WHERE ma.status IN (1, 2)
         AND STR_TO_DATE(ma.attendance_date, '%Y-%m-%d')
         BETWEEN :start AND :end
         """
@@ -403,9 +419,9 @@ def export_absentees_pdf(data: ReportRequest, db: Session = Depends(get_db)):
             base_query += f" AND s.semester_id IN ({','.join(map(str, data.semester_ids))})"
 
         if data.section_ids:
-            base_query += f" AND sec.id IN ({','.join(map(str, data.section_ids))})"
+            base_query += f" AND sec.mt_details_id IN ({','.join(map(str, data.section_ids))})"
 
-        base_query += " GROUP BY d.dept_name, s.term_name, c.crs_title, sec.section"
+        base_query += " GROUP BY d.dept_id, d.dept_name, ab.academic_batch_id, s.semester_id, s.term_name, c.crs_id, c.crs_title, sec.mt_details_id, sec.mt_details_name"
 
         result = db.execute(text(base_query), params).mappings().all()
 

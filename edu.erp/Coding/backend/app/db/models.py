@@ -7559,3 +7559,39 @@ class CudosCourseCloOwner(Base):
     created_date = Column(Date, nullable=True)
     modified_date = Column(Date, nullable=True)
     mte_finalize_flag = Column(TINYINT, nullable=True)
+
+    
+class LMSManageAttendance(Base):
+    __tablename__ = "lms_manage_attendance"
+
+    attendance_id = Column(Integer, primary_key=True, autoincrement=True)
+    academic_batch_id = Column(Integer, nullable=True, index=True)
+    semester_id = Column(Integer, nullable=True)
+    crs_id = Column(Integer, nullable=True, index=True)
+    section_id = Column(Integer, nullable=True, index=True)
+    attendance_date = Column(Date, nullable=True)
+    created_by = Column(Integer, nullable=True)
+    created_at = Column(Date, nullable=True)
+    modified_by = Column(Integer, nullable=True)
+    modified_at = Column(Date, nullable=True)
+    status = Column(TINYINT, nullable=True, index=True)
+    attendance_class_count = Column(MEDIUMINT, nullable=True)
+    tt_detail_id = Column(Integer, nullable=True)
+
+
+class LMSMapStudentAttendance(Base):
+    __tablename__ = "lms_map_student_attendance"
+
+    stud_attendance_id = Column(Integer, primary_key=True, autoincrement=True)
+    attendance_id = Column(Integer, nullable=True, index=True)
+    ssd_id = Column(Integer, nullable=True, index=True)
+    student_usn = Column(String(20), nullable=True)
+    a_type_id = Column(Integer, nullable=False)
+    attendance_status = Column(String(10), nullable=True)
+    refer_absent_status = Column(TINYINT, nullable=True, comment="> 0 is absent")
+    remarks = Column(Text, nullable=True)
+    activity = Column(TINYINT, nullable=True, server_default=text("0"))
+    sms_sent = Column(TINYINT, nullable=True, server_default=text("0"))
+    notification_sent = Column(TINYINT, nullable=False, server_default=text("0"))
+    accept_flag = Column(TINYINT, nullable=True, server_default=text("0"))
+    stud_attendance_doc_url = Column(String(1000), nullable=True)

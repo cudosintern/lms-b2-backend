@@ -111,16 +111,24 @@ def get_lesson_schedule_details(
         topics = db.execute(
             text(
                 """
-                SELECT t.topic_id, t.topic_code, t.topic_title,
-                       t.academic_batch_id, t.semester_id, t.course_id
-                FROM cudos_topic t
-                WHERE t.academic_batch_id = :academic_batch_id
-                  AND t.semester_id = :semester_id
-                  AND t.course_id = :crs_id
+                SELECT DISTINCT t.topic_id, t.topic_code, t.topic_title,
+                       t.topic_content, t.topic_hrs, t.num_of_sessions,
+                       mit.inst_map_id AS mapping_id, mit.instructor_id,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM lms_ls_topic_map ltm
+                           WHERE ltm.lls_id = :selected_lls_id
+                             AND ltm.topic_id = t.topic_id
+                       ) THEN 1 ELSE 0 END AS is_selected
+                FROM lms_map_instructor_topic mit
+                JOIN cudos_topic t ON t.topic_id = mit.topic_id
+                WHERE mit.academic_batch_id = :academic_batch_id
+                  AND mit.semester_id = :semester_id
+                  AND mit.crs_id = :crs_id
+                  AND mit.section_id = :section_id
                 ORDER BY t.topic_id DESC
                 """
             ),
-            params,
+            {**params, "selected_lls_id": request.lls_id or 0},
         ).mappings().all()
 
         lls_columns = _table_columns(db, "lms_lesson_schedule")
@@ -156,23 +164,33 @@ def get_lesson_schedule_details(
 
         # selected_topic_id = lesson_data.get("topic_id")
 
-        selected_topic_id = (request.topic_id or lesson_data.get("topic_id"))
-        portions = []
-        if selected_topic_id:
-            portions = db.execute(
-                text(
-                    """
-                    SELECT mtp_id AS portion_id, topic_id, lesson_schedule_id,
-                           portion_ref, portion_per_hour, planned_date,
-                           delivery_date, start_time, end_time, status
-                    FROM lms_map_portion_ls
-                    WHERE topic_id = :topic_id
-                      AND (section_id IS NULL OR section_id = :section_id)
-                    ORDER BY planned_date, mtp_id
-                    """
-                ),
-                {**params, "topic_id": selected_topic_id},
-            ).mappings().all()
+        selected_topic_id = request.topic_id or lesson_data.get("topic_id")
+        portions = db.execute(
+            text(
+                """
+                SELECT DISTINCT p.mtp_id AS portion_id, p.topic_id, p.lesson_schedule_id,
+                       p.portion_ref, p.portion_per_hour, p.planned_date,
+                       p.delivery_date, p.start_time, p.end_time, p.status,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM lms_ls_lesson_schedule_map lm
+                           WHERE lm.lls_id = :selected_lls_id
+                             AND lm.mtp_id = p.mtp_id
+                       ) THEN 1 ELSE 0 END AS is_selected
+                FROM lms_map_portion_ls p
+                JOIN lms_map_instructor_topic mit
+                  ON mit.topic_id = p.topic_id
+                 AND mit.academic_batch_id = :academic_batch_id
+                 AND mit.semester_id = :semester_id
+                 AND mit.crs_id = :crs_id
+                 AND mit.section_id = :section_id
+                WHERE p.section_id = :section_id
+                  AND (:topic_id IS NULL OR p.topic_id = :topic_id)
+                ORDER BY p.topic_id, p.planned_date, p.mtp_id
+                """
+            ),
+            {**params, "topic_id": selected_topic_id,
+             "selected_lls_id": lesson_data.get("lls_id") or 0},
+        ).mappings().all()
 
         delivery_methods = []
         if selected_topic_id:
@@ -216,6 +234,37 @@ def get_lesson_schedule_details(
             params,
         ).mappings().all()
 
+        students = db.execute(
+            text(
+                """
+                SELECT DISTINCT s.student_id, s.usno, s.regno, s.roll_number,
+                       s.name, s.first_name, s.middle_name, s.last_name,
+                       s.academic_batch_id, s.current_semester, s.section,
+                       CASE WHEN EXISTS (
+                           SELECT 1 FROM lms_ls_student_map sm
+                           WHERE sm.lls_id = :selected_lls_id
+                             AND sm.ssd_id = s.student_id
+                       ) THEN 1 ELSE 0 END AS is_selected,
+                       TRIM(
+                           CONCAT_WS(' ', NULLIF(s.first_name, ''),
+                                          NULLIF(s.middle_name, ''),
+                                          NULLIF(s.last_name, ''))
+                       ) AS student_name
+                FROM iems_students s
+                JOIN cudos_map_courseto_student mcs
+                  ON mcs.student_id = s.student_id
+                WHERE mcs.academic_batch_id = :academic_batch_id
+                  AND mcs.semester_id = :semester_id
+                  AND mcs.crs_id = :crs_id
+                  AND mcs.status = 1
+                  AND mcs.crs_reg_flag = 1
+                  AND s.status = 1
+                ORDER BY s.usno, s.student_id
+                """
+            ),
+            {**params, "selected_lls_id": lesson_data.get("lls_id") or 0},
+        ).mappings().all()
+
         notifications = db.execute(
             text(
                 """
@@ -242,6 +291,8 @@ def get_lesson_schedule_details(
             ],
             "delivery_method_list": [dict(row) for row in delivery_methods],
             "bloom_level_list": [dict(row) for row in bloom_levels],
+            "student_list": [dict(row) for row in students],
+            "student_count": len(students),
             "lesson_schedule": lesson_data or None,
             "notification_count": len(notifications),
             "notifications": [dict(row) for row in notifications],

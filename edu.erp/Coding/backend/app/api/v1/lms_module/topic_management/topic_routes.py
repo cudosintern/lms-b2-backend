@@ -88,14 +88,19 @@ def serialize_portion(p, index):
 def seed_portions(db, context, topic, user_id):
     existing = db.query(LMSMapPortionLS).filter_by(topic_id=topic.topic_id,
         section_id=context.section_id).all()
-    # Source schedule IDs always refer to cudos_topic_lesson_schedule.
+    # An imported section owns its lesson rows. Reassigning instructors must
+    # not reseed them or overwrite edits made in LMS.
+    if existing:
+        return
+    # The LMS foreign key targets topic_lesson_schedule, not the independent
+    # cudos_topic_lesson_schedule ID space. Copy CUDOS content without that FK.
     source = db.query(CudosTopicLessonSchedule).filter_by(topic_id=topic.topic_id,
         academic_batch_id=context.academic_batch_id, crs_id=context.course_id).all()
     saved = {p.lesson_schedule_id for p in existing if p.lesson_schedule_id}
     for s in source:
         if s.lesson_schedule_id not in saved:
             db.add(LMSMapPortionLS(topic_id=topic.topic_id, section_id=context.section_id,
-                lesson_schedule_id=s.lesson_schedule_id, portion_ref=s.portion_ref,
+                lesson_schedule_id=None, portion_ref=s.portion_ref,
                 portion_per_hour=s.portion_per_hour or '', planned_date=s.conduction_date,
                 delivery_date=s.actual_delivery_date, created_by=user_id, created_date=datetime.now()))
     if not source and not existing:

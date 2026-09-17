@@ -1,5 +1,5 @@
 from datetime import date, datetime
-from typing import Optional
+from typing import List, Optional
 
 from fastapi import APIRouter, Depends, Query
 from pydantic import BaseModel, Field
@@ -19,6 +19,12 @@ class ScheduleClassCreateRequest(BaseModel):
     crs_id: int
     section_id: int
     topic_id: Optional[int] = None
+    topic_ids: List[int] = Field(default_factory=list)
+    portion_ids: List[int] = Field(default_factory=list)
+    student_ids: List[int] = Field(default_factory=list)
+    tt_day_map_id: Optional[int] = None
+    time_table_id: Optional[int] = None
+    tt_detail_id: Optional[int] = None
     plan_date: date
     start_time: str = Field(..., min_length=1)
     end_time: str = Field(..., min_length=1)
@@ -36,6 +42,12 @@ class ScheduleClassUpdateRequest(BaseModel):
     crs_id: Optional[int] = None
     section_id: Optional[int] = None
     topic_id: Optional[int] = None
+    topic_ids: List[int] = Field(default_factory=list)
+    portion_ids: List[int] = Field(default_factory=list)
+    student_ids: List[int] = Field(default_factory=list)
+    tt_day_map_id: Optional[int] = None
+    time_table_id: Optional[int] = None
+    tt_detail_id: Optional[int] = None
     plan_date: Optional[date] = None
     start_time: Optional[str] = None
     end_time: Optional[str] = None
@@ -84,6 +96,146 @@ def _record_exists(db: Session, table_name: str, key_column: str, value: Optiona
     return bool(exists)
 
 
+def _sync_lesson_portions(
+    db: Session, lls_id: int, academic_batch_id: int, semester_id: int,
+    crs_id: int, section_id: int, topic_ids: List[int],
+    portion_ids: List[int], user_id: int,
+) -> None:
+    """Attach every selected imported topic portion to one lesson schedule."""
+    db.execute(
+        text("DELETE FROM lms_ls_lesson_schedule_map WHERE lls_id = :lls_id"),
+        {"lls_id": lls_id},
+    )
+    if not portion_ids:
+        return
+
+    valid_ids = db.execute(
+        text(
+            """
+            SELECT DISTINCT p.mtp_id,
+                   (
+                       SELECT cls.lesson_schedule_id
+                       FROM cudos_topic_lesson_schedule cls
+                       WHERE cls.topic_id = p.topic_id
+                         AND cls.academic_batch_id = :academic_batch_id
+                         AND cls.semester_id = :semester_id
+                         AND cls.crs_id = :crs_id
+                         AND cls.portion_ref = p.portion_ref
+                       ORDER BY cls.lesson_schedule_id
+                       LIMIT 1
+                   ) AS source_lesson_schedule_id
+            FROM lms_map_portion_ls p
+            JOIN lms_map_instructor_topic mit
+              ON mit.topic_id = p.topic_id AND mit.section_id = p.section_id
+            WHERE p.mtp_id IN :portion_ids
+              AND p.section_id = :section_id
+              AND p.topic_id IN :topic_ids
+            """
+        ).bindparams(
+            bindparam("portion_ids", expanding=True),
+            bindparam("topic_ids", expanding=True),
+        ),
+        {"portion_ids": tuple(set(portion_ids)), "topic_ids": tuple(set(topic_ids)),
+         "academic_batch_id": academic_batch_id, "semester_id": semester_id,
+         "crs_id": crs_id, "section_id": section_id},
+    ).mappings().all()
+    if len({row["mtp_id"] for row in valid_ids}) != len(set(portion_ids)):
+        raise ValueError("One or more topic portions are not imported for the selected section")
+    if any(row["source_lesson_schedule_id"] is None for row in valid_ids):
+        raise ValueError("A selected topic portion has no matching cudos_topic_lesson_schedule record")
+
+    for portion in valid_ids:
+        db.execute(
+            text(
+                """
+                INSERT INTO lms_ls_lesson_schedule_map
+                    (lls_id, lesson_schedule_id, mtp_id, created_by, modified_by)
+                VALUES (:lls_id, :lesson_schedule_id, :mtp_id, :user_id, :user_id)
+                """
+            ),
+            {"lls_id": lls_id, "lesson_schedule_id": portion["source_lesson_schedule_id"],
+             "mtp_id": portion["mtp_id"], "user_id": user_id},
+        )
+
+    if "lesson_schedule_id" in _get_table_columns(db, "lms_lesson_schedule"):
+        db.execute(
+            text("UPDATE lms_lesson_schedule SET lesson_schedule_id = :mtp_id WHERE lls_id = :lls_id"),
+            {"mtp_id": valid_ids[0]["mtp_id"], "lls_id": lls_id},
+        )
+
+
+def _sync_lesson_topics(
+    db: Session, lls_id: int, academic_batch_id: int, semester_id: int,
+    crs_id: int, section_id: int, topic_ids: List[int], user_id: int,
+) -> None:
+    db.execute(text("DELETE FROM lms_ls_topic_map WHERE lls_id = :lls_id"), {"lls_id": lls_id})
+    if not topic_ids:
+        return
+    valid_ids = set(db.execute(
+        text(
+            """
+            SELECT DISTINCT topic_id
+            FROM lms_map_instructor_topic
+            WHERE topic_id IN :topic_ids
+              AND academic_batch_id = :academic_batch_id
+              AND semester_id = :semester_id
+              AND crs_id = :crs_id
+              AND section_id = :section_id
+            """
+        ).bindparams(bindparam("topic_ids", expanding=True)),
+        {"topic_ids": tuple(set(topic_ids)), "academic_batch_id": academic_batch_id,
+         "semester_id": semester_id, "crs_id": crs_id, "section_id": section_id},
+    ).scalars())
+    if valid_ids != set(topic_ids):
+        raise ValueError("One or more topics are not imported for the selected section")
+    for topic_id in valid_ids:
+        db.execute(
+            text("INSERT INTO lms_ls_topic_map (lls_id, topic_id, created_by, modified_by) VALUES (:lls_id, :topic_id, :user_id, :user_id)"),
+            {"lls_id": lls_id, "topic_id": topic_id, "user_id": user_id},
+        )
+
+
+def _sync_lesson_students(
+    db: Session, lls_id: int, academic_batch_id: int, semester_id: int, crs_id: int,
+    student_ids: List[int], user_id: int,
+) -> None:
+    db.execute(text("DELETE FROM lms_ls_student_map WHERE lls_id = :lls_id"), {"lls_id": lls_id})
+    if not student_ids:
+        return
+    students = db.execute(
+        text(
+            """
+            SELECT DISTINCT s.student_id, s.usno
+            FROM iems_students s
+            JOIN cudos_map_courseto_student mcs
+              ON mcs.student_id = s.student_id
+            WHERE s.student_id IN :student_ids
+              AND mcs.academic_batch_id = :academic_batch_id
+              AND mcs.semester_id = :semester_id
+              AND mcs.crs_id = :crs_id
+              AND mcs.status = 1
+              AND mcs.crs_reg_flag = 1
+              AND s.status = 1
+            """
+        ).bindparams(bindparam("student_ids", expanding=True)),
+        {"student_ids": tuple(set(student_ids)), "academic_batch_id": academic_batch_id,
+         "semester_id": semester_id, "crs_id": crs_id},
+    ).mappings().all()
+    if len(students) != len(set(student_ids)):
+        raise ValueError("One or more students do not belong to the selected batch and semester")
+    for student in students:
+        db.execute(
+            text(
+                """
+                INSERT INTO lms_ls_student_map
+                    (lls_id, ssd_id, student_usn, created_by, modified_by)
+                VALUES (:lls_id, :student_id, :usno, :user_id, :user_id)
+                """
+            ),
+            {"lls_id": lls_id, "student_id": student["student_id"], "usno": student["usno"], "user_id": user_id},
+        )
+
+
 # Resolves the matching timetable context for the selected class slot when it exists.
 def _resolve_timetable_context(
     db: Session,
@@ -109,25 +261,23 @@ def _resolve_timetable_context(
                 u.username,
                 TRIM(CONCAT(COALESCE(u.first_name, ''), ' ', COALESCE(u.last_name, ''))) AS faculty_name
             FROM lms_tt_time_table_details td
-            LEFT JOIN lms_tt_time_table tt
+            JOIN lms_tt_time_table tt
               ON tt.tt_detail_id = td.tt_detail_id
              AND tt.crs_id = :crs_id
-             AND tt.class_start_time = :start_time
-             AND tt.class_end_time = :end_time
-            LEFT JOIN lms_tt_time_table_day_mapping dm
+             AND LEFT(tt.class_start_time, 5) = LEFT(:start_time, 5)
+             AND LEFT(tt.class_end_time, 5) = LEFT(:end_time, 5)
+            JOIN lms_tt_time_table_day_mapping dm
               ON dm.time_table_id = tt.time_table_id
-             AND DATE(dm.class_date) = :plan_date
+             AND COALESCE(
+                   STR_TO_DATE(dm.class_date, '%d-%m-%Y'),
+                   STR_TO_DATE(dm.class_date, '%Y-%m-%d')
+                 ) = :plan_date
             LEFT JOIN iems_users u
               ON u.id = dm.allot_by
             WHERE td.academic_batch_id = :academic_batch_id
               AND td.semester_id = :semester_id
               AND td.section_id = :section_id
             ORDER BY
-              CASE
-                WHEN DATE(dm.class_date) = :plan_date THEN 0
-                WHEN dm.week_day_name = :weekday_name THEN 1
-                ELSE 2
-              END,
               dm.tt_day_map_id DESC,
               tt.time_table_id DESC
             LIMIT 1
@@ -234,7 +384,13 @@ def get_schedule_courses(
 
 # Fetches batch, semester, section, topic, and timetable slot data for the selected course.
 @router.get("/meta/batches-sections")
-def get_schedule_batches_sections(crs_id: int, db: Session = Depends(get_db)):
+def get_schedule_batches_sections(
+    crs_id: int,
+    academic_batch_id: Optional[int] = None,
+    semester_id: Optional[int] = None,
+    section_id: Optional[int] = None,
+    db: Session = Depends(get_db),
+):
     course = db.execute(
         text(
             """
@@ -294,7 +450,8 @@ def get_schedule_batches_sections(crs_id: int, db: Session = Depends(get_db)):
             SELECT
                 tt.time_table_id,
                 tt.tt_detail_id,
-                tt.crs_id,
+                :crs_id AS crs_id,
+                tt.crs_id AS timetable_crs_id,
                 tt.crs_code,
                 tt.class_start_time,
                 tt.class_end_time,
@@ -318,11 +475,34 @@ def get_schedule_batches_sections(crs_id: int, db: Session = Depends(get_db)):
               ON dm.time_table_id = tt.time_table_id
             LEFT JOIN iems_users u
               ON u.id = dm.allot_by
-            WHERE tt.crs_id = :crs_id
-            ORDER BY dm.class_date DESC, tt.class_start_time ASC
+            WHERE tt.crs_code = :crs_code
+              AND (:academic_batch_id IS NULL OR td.academic_batch_id = :academic_batch_id)
+              AND (:semester_id IS NULL OR td.semester_id = :semester_id)
+              AND (:section_id IS NULL OR td.section_id = :section_id)
+              AND dm.class_date IS NOT NULL
+              AND COALESCE(
+                    STR_TO_DATE(dm.class_date, '%d-%m-%Y'),
+                    STR_TO_DATE(dm.class_date, '%Y-%m-%d')
+                  ) BETWEEN COALESCE(
+                    STR_TO_DATE(td.tt_start_date, '%d-%m-%Y'),
+                    STR_TO_DATE(td.tt_start_date, '%Y-%m-%d')
+                  ) AND COALESCE(
+                    STR_TO_DATE(td.tt_end_date, '%d-%m-%Y'),
+                    STR_TO_DATE(td.tt_end_date, '%Y-%m-%d')
+                  )
+            ORDER BY COALESCE(
+                STR_TO_DATE(dm.class_date, '%d-%m-%Y'),
+                STR_TO_DATE(dm.class_date, '%Y-%m-%d')
+            ) DESC, tt.class_start_time ASC
             """
         ),
-        {"crs_id": crs_id},
+        {
+            "crs_id": crs_id,
+            "crs_code": course["crs_code"],
+            "academic_batch_id": academic_batch_id,
+            "semester_id": semester_id,
+            "section_id": section_id,
+        },
     ).mappings().all()
 
     if semester_ids:
@@ -401,6 +581,7 @@ def check_schedule_duplicate(payload: ScheduleClassDuplicateRequest, db: Session
 # Creates a scheduled class and stores the matched timetable context when available.
 @router.post("/create")
 def create_schedule_class(payload: ScheduleClassCreateRequest, db: Session = Depends(get_db)):
+    topic_id = payload.topic_id or (payload.topic_ids[0] if payload.topic_ids else None)
     if not _record_exists(db, "iems_academic_batch", "academic_batch_id", payload.academic_batch_id):
         return returnException("Academic batch not found")
     if not _record_exists(db, "iems_semester", "semester_id", payload.semester_id):
@@ -409,7 +590,7 @@ def create_schedule_class(payload: ScheduleClassCreateRequest, db: Session = Dep
         return returnException("Course not found")
     if not _record_exists(db, "iems_section", "id", payload.section_id):
         return returnException("Section not found")
-    if payload.topic_id is not None and not _record_exists(db, "cudos_topic", "topic_id", payload.topic_id):
+    if topic_id is not None and not _record_exists(db, "cudos_topic", "topic_id", topic_id):
         return returnException("Topic not found")
 
     duplicate = _find_duplicate_schedule(
@@ -435,6 +616,12 @@ def create_schedule_class(payload: ScheduleClassCreateRequest, db: Session = Dep
         start_time=payload.start_time,
         end_time=payload.end_time,
     )
+    for key in ("tt_day_map_id", "time_table_id", "tt_detail_id"):
+        supplied_value = getattr(payload, key)
+        if supplied_value is not None:
+            timetable_context[key] = supplied_value
+    if not timetable_context.get("tt_day_map_id"):
+        return returnException("Timetable day mapping not found for the selected class")
 
     try:
         result = db.execute(
@@ -467,7 +654,7 @@ def create_schedule_class(payload: ScheduleClassCreateRequest, db: Session = Dep
                 "academic_batch_id": payload.academic_batch_id,
                 "semester_id": payload.semester_id,
                 "crs_id": payload.crs_id,
-                "topic_id": payload.topic_id,
+                "topic_id": topic_id,
                 "section_id": payload.section_id,
                 "plan_date": payload.plan_date,
                 "video_link": payload.video_link,
@@ -477,6 +664,21 @@ def create_schedule_class(payload: ScheduleClassCreateRequest, db: Session = Dep
                 "created_by": payload.created_by,
                 "created_date": datetime.now(),
             },
+        )
+        _sync_lesson_portions(
+            db, result.lastrowid, payload.academic_batch_id, payload.semester_id,
+            payload.crs_id, payload.section_id,
+            payload.topic_ids or ([topic_id] if topic_id else []), payload.portion_ids,
+            payload.created_by,
+        )
+        _sync_lesson_topics(
+            db, result.lastrowid, payload.academic_batch_id, payload.semester_id,
+            payload.crs_id, payload.section_id,
+            payload.topic_ids or ([topic_id] if topic_id else []), payload.created_by,
+        )
+        _sync_lesson_students(
+            db, result.lastrowid, payload.academic_batch_id, payload.semester_id, payload.crs_id,
+            payload.student_ids, payload.created_by,
         )
         db.commit()
         return returnSuccess(
@@ -629,7 +831,9 @@ def update_schedule_class(lls_id: int, payload: ScheduleClassUpdateRequest, db: 
         return returnException("Course not found")
     if not _record_exists(db, "iems_section", "id", section_id):
         return returnException("Section not found")
-    topic_id = payload.topic_id if payload.topic_id is not None else current["topic_id"]
+    topic_id = payload.topic_id if payload.topic_id is not None else (
+        payload.topic_ids[0] if payload.topic_ids else current["topic_id"]
+    )
     if topic_id is not None and not _record_exists(db, "cudos_topic", "topic_id", topic_id):
         return returnException("Topic not found")
 
@@ -657,6 +861,12 @@ def update_schedule_class(lls_id: int, payload: ScheduleClassUpdateRequest, db: 
         start_time=start_time,
         end_time=end_time,
     )
+    for key in ("tt_day_map_id", "time_table_id", "tt_detail_id"):
+        supplied_value = getattr(payload, key)
+        if supplied_value is not None:
+            timetable_context[key] = supplied_value
+    if not timetable_context.get("tt_day_map_id"):
+        return returnException("Timetable day mapping not found for the selected class")
 
     try:
         db.execute(
@@ -704,6 +914,22 @@ def update_schedule_class(lls_id: int, payload: ScheduleClassUpdateRequest, db: 
                 "lls_id": lls_id,
             },
         )
+        if "portion_ids" in payload.model_fields_set:
+            _sync_lesson_portions(
+                db, lls_id, academic_batch_id, semester_id, crs_id, section_id,
+                payload.topic_ids or ([topic_id] if topic_id else []), payload.portion_ids,
+                payload.modified_by,
+            )
+        if "topic_ids" in payload.model_fields_set:
+            _sync_lesson_topics(
+                db, lls_id, academic_batch_id, semester_id, crs_id, section_id,
+                payload.topic_ids or ([topic_id] if topic_id else []), payload.modified_by,
+            )
+        if "student_ids" in payload.model_fields_set:
+            _sync_lesson_students(
+                db, lls_id, academic_batch_id, semester_id, crs_id,
+                payload.student_ids, payload.modified_by,
+            )
         db.commit()
         return returnSuccess({"lls_id": lls_id}, "Scheduled class updated successfully")
     except Exception as exc:

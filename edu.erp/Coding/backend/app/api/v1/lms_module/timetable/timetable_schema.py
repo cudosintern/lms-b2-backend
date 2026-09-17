@@ -207,3 +207,8 @@ class ResetTimetableDateRequest(BaseModel):
 
 class ExportTimetableRequest(BaseModel):
     expo_tt_detail_id: int
+
+class TimetableDetailsRequest(BaseModel):
+    academic_batch_id: int
+    semester_id: int
+    section_id: int
