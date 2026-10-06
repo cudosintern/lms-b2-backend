@@ -1,17 +1,26 @@
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 from typing import Optional
 
-class StudentQuizListRequest(BaseModel):
-    student_id: Optional[int] = None
-    academic_batch_id: int
-    semester_id: int
-    crs_id: int
+class StudentQuizIdentity(BaseModel):
+    student_id: int = Field(..., gt=0)
+
+class StudentQuizListRequest(StudentQuizIdentity):
+    academic_batch_id: Optional[int] = Field(None, gt=0)
+    semester_id: Optional[int] = Field(None, gt=0)
+    crs_id: Optional[int] = Field(None, gt=0)
+    section_id: Optional[int] = Field(None, gt=0)
 
 class QuizAnswerItem(BaseModel):
-    qq_id: int
-    qq_option_id: Optional[int] = None   # None if student skipped the question
+    qq_id: int = Field(..., gt=0)
+    qq_option_id: Optional[int] = Field(None, gt=0)
+    qq_option_ids: list[int] = Field(default_factory=list)
+    answer_text: Optional[str] = None
 
-class StudentQuizSubmitRequest(BaseModel):
-    ssd_id: int
-    student_usn: Optional[str] = ''      # may be empty if USN not stored in mapping
-    answers: list[QuizAnswerItem]
+    def option_ids(self):
+        return set(self.qq_option_ids) | ({self.qq_option_id} if self.qq_option_id else set())
+
+class StudentQuizSubmitRequest(StudentQuizIdentity):
+    answers: list[QuizAnswerItem] = Field(default_factory=list)
+
+class StudentQuizSaveRequest(StudentQuizIdentity):
+    answer: QuizAnswerItem

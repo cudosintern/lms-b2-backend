@@ -1,9 +1,11 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, File, Form, UploadFile, HTTPException
 from sqlalchemy.orm import Session
 from sqlalchemy import func, text, bindparam, or_
 from datetime import datetime, timezone, date
 from typing import Literal, Optional, List
-from pydantic import BaseModel, Field, validator
+from pydantic import BaseModel, Field, validator, ValidationError
+import json
+from .announcement_files import save_attachment
 
 from app.core.database import get_db
 from app.utils.http_return_helper import returnSuccess, returnException
@@ -388,6 +390,33 @@ def get_send_recipients(
 
 @router.post("/send/create")
 def create_send_announcement(payload: SendAnnouncementCreateRequest, db: Session = Depends(get_db)):
+    return _create_send_announcement(payload, db)
+
+
+@router.post("/send/create-with-attachment")
+def create_send_announcement_with_attachment(
+    payload: str = Form(...), attachment: UploadFile = File(...),
+    db: Session = Depends(get_db),
+):
+    try:
+        parsed = json.loads(payload)
+        if not isinstance(parsed, dict):
+            raise ValueError("Expected a JSON object")
+        request = SendAnnouncementCreateRequest(**parsed)
+    except (ValueError, ValidationError) as exc:
+        raise HTTPException(422, "Invalid announcement payload") from exc
+    filename, url, path = save_attachment(attachment)
+    succeeded = False
+    try:
+        response = _create_send_announcement(request, db, (filename, url))
+        succeeded = isinstance(response, dict) and response.get("status") is True
+        return response
+    finally:
+        if not succeeded:
+            path.unlink(missing_ok=True)
+
+
+def _create_send_announcement(payload, db, attachment=None):
     normalized_user_type = _normalize_user_type(payload.target_user_type)
     if normalized_user_type not in {"faculty", "student", "parent"}:
         return returnException("Invalid target_user_type. Use faculty/student/parent.")
@@ -409,6 +438,8 @@ def create_send_announcement(payload: SendAnnouncementCreateRequest, db: Session
             delivery_hide_date=payload.delivery_hide_date,
             delivery_hide_time=payload.delivery_hide_time,
             notify_description=payload.notify_description.strip(),
+            notify_attachment=attachment[0] if attachment else None,
+            notify_document_url=attachment[1] if attachment else None,
             display_to_timetable=payload.display_to_timetable,
             created_by=payload.created_by,
             created_at=datetime.now(timezone.utc),
@@ -682,6 +713,8 @@ def get_sent_announcement_details(announcement_id: int, db: Session = Depends(ge
         "delivery_hide_date": announcement.delivery_hide_date,
         "delivery_hide_time": announcement.delivery_hide_time,
         "display_to_timetable": announcement.display_to_timetable,
+        "notify_attachment": announcement.notify_attachment,
+        "notify_document_url": announcement.notify_document_url,
         "created_by": announcement.created_by,
         "created_at": announcement.created_at,
         "details": details,

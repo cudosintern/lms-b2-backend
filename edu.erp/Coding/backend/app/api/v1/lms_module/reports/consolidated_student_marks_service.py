@@ -1,861 +1,406 @@
+"""LMS consolidated marks, using the migrated curriculum/course/section tables."""
 from collections import defaultdict
-from datetime import date
-from typing import Any, Dict, List, Optional
+from io import BytesIO, StringIO
+import csv
 
-from fastapi import HTTPException, status
-from sqlalchemy import and_, or_
-from sqlalchemy.orm import Session
-
-from app.db import models
+from fastapi import HTTPException
+from sqlalchemy import bindparam, text
 
 
-def _optional_org_filter(column, org_id: Optional[int]):
-    if org_id is None:
-        return True
-    return or_(column == org_id, column.is_(None))
+def _rows(db, sql, params=None, expanding=()):
+    statement = text(sql)
+    for key in expanding:
+        statement = statement.bindparams(bindparam(key, expanding=True))
+    return [dict(row) for row in db.execute(statement, params or {}).mappings()]
 
 
-def _resolve_semester_context(
-    db: Session,
-    academic_batch_id: int,
-    requested_semester: Optional[int],
-) -> Dict[str, Optional[int]]:
-    context: Dict[str, Optional[int]] = {
-        "input_semester_id": requested_semester,
-        "resolved_crclm_term_id": None,
-        "resolved_semester_id": None,
-        "resolved_semester_number": None,
-    }
-    if requested_semester is None:
-        return context
-
-    requested_value = int(requested_semester)
-    term_query = db.query(models.IEMSCrclmTerm).filter(
-        models.IEMSCrclmTerm.crclm_id == academic_batch_id
-    )
-    semester_query = db.query(models.IEMSemester).filter(
-        models.IEMSemester.academic_batch_id == academic_batch_id
-    )
-
-    term_row = term_query.filter(
-        models.IEMSCrclmTerm.crclm_term_id == requested_value
-    ).first()
-    if term_row is not None:
-        context["resolved_crclm_term_id"] = term_row.crclm_term_id
-        context["resolved_semester_number"] = term_row.term_name
-    else:
-        semester_row = semester_query.filter(
-            models.IEMSemester.semester_id == requested_value
-        ).first()
-        if semester_row is not None:
-            context["resolved_semester_id"] = semester_row.semester_id
-            context["resolved_semester_number"] = (
-                semester_row.semester or semester_row.semester_id
-            )
-        else:
-            semester_row = semester_query.filter(
-                models.IEMSemester.semester == requested_value
-            ).first()
-            if semester_row is not None:
-                context["resolved_semester_id"] = semester_row.semester_id
-                context["resolved_semester_number"] = semester_row.semester
-            else:
-                context["resolved_semester_id"] = requested_value
-                context["resolved_semester_number"] = requested_value
-
-    if (
-        context["resolved_semester_id"] is None
-        and context["resolved_semester_number"] is not None
-    ):
-        semester_row = semester_query.filter(
-            models.IEMSemester.semester == context["resolved_semester_number"]
-        ).first()
-        if semester_row is not None:
-            context["resolved_semester_id"] = semester_row.semester_id
-
-    if (
-        context["resolved_crclm_term_id"] is None
-        and context["resolved_semester_number"] is not None
-    ):
-        term_row = term_query.filter(
-            models.IEMSCrclmTerm.term_name == context["resolved_semester_number"]
-        ).first()
-        if term_row is not None:
-            context["resolved_crclm_term_id"] = term_row.crclm_term_id
-
-    if context["resolved_semester_id"] is None:
-        context["resolved_semester_id"] = context["resolved_semester_number"]
-
-    return context
+def get_department_options(db, org_id):
+    return _rows(db, """SELECT dept_id AS id, dept_name AS name FROM iems_department
+        WHERE (:org_id IS NULL OR org_id = :org_id OR org_id IS NULL)
+        ORDER BY dept_name""", {"org_id": org_id})
 
 
-def _is_dummy_identifier(value: Optional[str]) -> bool:
-    if value is None:
-        return False
-    normalized = str(value).strip()
-    return normalized.isdigit()
+def get_curriculum_options(db, org_id, department_id=None):
+    return _rows(db, """SELECT academic_batch_id, academic_batch_id AS crclm_id,
+        COALESCE(academic_batch_desc, academic_batch_code) AS name, dept_id, pgm_id
+        FROM iems_academic_batch
+        WHERE (:org_id IS NULL OR org_id = :org_id OR org_id IS NULL)
+          AND (:department_id IS NULL OR dept_id = :department_id)
+        ORDER BY name""", {"org_id": org_id, "department_id": department_id})
 
 
-def _build_resolved_filters(
-    request,
-    semester_context: Dict[str, Optional[int]],
-    section_row: Optional[models.IEMSection] = None,
-    selected_course_ids: Optional[List[int]] = None,
-) -> Dict[str, Any]:
-    return {
-        "department_id": request.department_id,
-        "academic_batch_id": request.academic_batch_id,
-        "crclm_term_id": semester_context["resolved_crclm_term_id"],
-        "semester_id": semester_context["resolved_semester_id"],
-        "semester_number": semester_context["resolved_semester_number"],
-        "section_id": request.section_id,
-        "section_name": getattr(section_row, "section", None),
-        "selected_course_ids": selected_course_ids or [],
-        "include_total_marks": request.include_total_marks,
-        "from_date": request.from_date,
-        "to_date": request.to_date,
-    }
-
-
-def get_department_options(db: Session, org_id: Optional[int]) -> List[Dict[str, Any]]:
-    rows = (
-        db.query(models.IEMSDepartment)
-        .filter(_optional_org_filter(models.IEMSDepartment.org_id, org_id))
-        .order_by(models.IEMSDepartment.dept_name.asc())
-        .all()
-    )
-    return [{"id": row.dept_id, "name": row.dept_name} for row in rows]
-
-
-def get_curriculum_options(
-    db: Session,
-    org_id: Optional[int],
-    department_id: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    query = (
-        db.query(models.IEMSAcademicBatch, models.IEMSCurriculum)
-        .outerjoin(
-            models.IEMSCurriculum,
-            models.IEMSCurriculum.crclm_id == models.IEMSAcademicBatch.academic_batch_id,
-        )
-        .filter(_optional_org_filter(models.IEMSAcademicBatch.org_id, org_id))
-    )
-    if department_id is not None:
-        query = query.filter(models.IEMSAcademicBatch.dept_id == department_id)
-
-    rows = query.order_by(models.IEMSAcademicBatch.academic_batch_desc.asc()).all()
-    return [
-        {
-            "academic_batch_id": batch.academic_batch_id,
-            "crclm_id": curriculum.crclm_id if curriculum else batch.academic_batch_id,
-            "name": batch.academic_batch_desc or batch.academic_batch_code,
-            "dept_id": batch.dept_id,
-            "pgm_id": batch.pgm_id,
-        }
-        for batch, curriculum in rows
-    ]
-
-
-def get_term_options(db: Session, academic_batch_id: int) -> List[Dict[str, Any]]:
-    rows = (
-        db.query(models.IEMSCrclmTerm, models.IEMSemester)
-        .outerjoin(
-            models.IEMSemester,
-            and_(
-                models.IEMSemester.academic_batch_id == models.IEMSCrclmTerm.crclm_id,
-                models.IEMSemester.semester == models.IEMSCrclmTerm.term_name,
-            ),
-        )
-        .filter(models.IEMSCrclmTerm.crclm_id == academic_batch_id)
-        .order_by(models.IEMSCrclmTerm.term_name.asc())
-        .all()
-    )
-    return [
-        {
-            "crclm_term_id": term.crclm_term_id,
-            "semester_id": semester.semester_id if semester else None,
-            "semester_number": term.term_name,
-            "name": getattr(semester, "semester_desc", None) or f"Semester {term.term_name}",
-        }
-        for term, semester in rows
-    ]
-
-
-def get_section_options(
-    db: Session,
-    academic_batch_id: int,
-    semester_id: Optional[int] = None,
-    crclm_term_id: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    semester_context = _resolve_semester_context(
-        db,
-        academic_batch_id,
-        crclm_term_id or semester_id,
-    )
-    rows = (
-        db.query(models.IEMSection)
-        .filter(
-            models.IEMSection.academic_batch_id == academic_batch_id,
-            or_(
-                models.IEMSection.semester_id == semester_context["resolved_semester_id"],
-                models.IEMSection.semester_id == semester_context["resolved_semester_number"],
-            ),
-        )
-        .order_by(models.IEMSection.section.asc())
-        .all()
-    )
-    return [
-        {"section_id": row.id, "section_name": row.section}
-        for row in rows
-        if row.section
-    ]
-
-
-def get_course_options(
-    db: Session,
-    academic_batch_id: int,
-    semester_id: Optional[int] = None,
-    crclm_term_id: Optional[int] = None,
-) -> List[Dict[str, Any]]:
-    semester_context = _resolve_semester_context(
-        db,
-        academic_batch_id,
-        crclm_term_id or semester_id,
-    )
-    query = db.query(models.IEMSCourses).filter(
-        models.IEMSCourses.academic_batch_id == academic_batch_id
-    )
-    if semester_context["resolved_semester_number"] is not None:
-        query = query.filter(
-            models.IEMSCourses.semester == semester_context["resolved_semester_number"]
-        )
-
-    rows = query.order_by(
-        models.IEMSCourses.crs_order.asc(),
-        models.IEMSCourses.crs_code.asc(),
-    ).all()
-    return [
-        {
-            "course_id": row.crs_id,
-            "course_code": row.crs_code,
-            "course_title": row.crs_title or row.crs_code,
-            "semester": row.semester,
-        }
-        for row in rows
-    ]
-
-
-def _pick_mark_value(*values: Optional[float]) -> Optional[float]:
-    for value in values:
-        if value is not None:
-            return float(value)
-    return None
-
-
-def _append_component(
-    components: List[Dict[str, Any]],
-    occasion_name: str,
-    marks: Optional[float],
-    max_marks: Optional[float] = None,
-    source: Optional[str] = None,
-) -> None:
-    if marks is None:
-        return
-    components.append(
-        {
-            "occasion_name": occasion_name,
-            "max_marks": float(max_marks) if max_marks is not None else None,
-            "marks": float(marks),
-            "source": source,
-        }
-    )
-
-
-def _build_components(
-    student_course: models.StudentCourse,
-    course: Optional[models.IEMSCourses],
-    detailed_components: List[Dict[str, Any]],
-) -> List[Dict[str, Any]]:
-    components = list(detailed_components)
-    has_detailed_cia = len(detailed_components) > 0
-
-    if not has_detailed_cia:
-        _append_component(
-            components,
-            "CIA Total",
-            student_course.total_cia,
-            getattr(course, "cia_max_marks", None),
-            "student_course",
-        )
-        _append_component(
-            components,
-            "ISE Total",
-            student_course.total_ise,
-            getattr(course, "ise_max_marks", None),
-            "student_course",
-        )
-        _append_component(
-            components,
-            "MSE Total",
-            student_course.total_mse,
-            getattr(course, "mse_max_marks", None),
-            "student_course",
-        )
-
-    see_marks = _pick_mark_value(student_course.see_actual, student_course.see)
-    _append_component(
-        components,
-        "SEE",
-        see_marks,
-        getattr(course, "see_max_marks", None),
-        "student_course",
-    )
-    _append_component(
-        components,
-        "Viva",
-        student_course.viva_marks,
-        getattr(course, "viva_max_marks", None),
-        "student_course",
-    )
-    tw_marks = _pick_mark_value(student_course.tw_marks_actual, student_course.tw_marks)
-    _append_component(
-        components,
-        "TW",
-        tw_marks,
-        getattr(course, "tw_max_marks", None),
-        "student_course",
-    )
-
-    if (
-        not has_detailed_cia
-        and student_course.cia_see is not None
-        and student_course.total_cia is None
-        and see_marks is None
-    ):
-        combined_max = None
-        if course is not None:
-            cia_max = getattr(course, "cia_max_marks", None) or 0
-            see_max = getattr(course, "see_max_marks", None) or 0
-            combined_max = cia_max + see_max if cia_max or see_max else None
-        _append_component(
-            components,
-            "CIA + SEE",
-            student_course.cia_see,
-            combined_max,
-            "student_course",
-        )
-
-    return components
-
-
-def _build_course_lookup(
-    db: Session,
-    academic_batch_id: int,
-    semester_number: Optional[int],
-    selected_course_ids: Optional[List[int]],
-) -> Dict[str, models.IEMSCourses]:
-    query = db.query(models.IEMSCourses).filter(
-        models.IEMSCourses.academic_batch_id == academic_batch_id
-    )
-    if semester_number is not None:
-        query = query.filter(models.IEMSCourses.semester == semester_number)
-    if selected_course_ids:
-        query = query.filter(models.IEMSCourses.crs_id.in_(selected_course_ids))
-    rows = query.all()
-    return {row.crs_code: row for row in rows}
-
-
-def _base_student_course_query(
-    db: Session,
-    academic_batch_id: int,
-    semester_number: int,
-    section_name: Optional[str],
-):
-    query = db.query(models.StudentCourse).filter(
-        models.StudentCourse.batch_id == academic_batch_id,
-        models.StudentCourse.semester == semester_number,
-        models.StudentCourse.is_withdrawn == 0,
-        models.StudentCourse.is_drop == 0,
-    )
-    if section_name:
-        query = query.filter(models.StudentCourse.section == section_name)
-    return query
-
-
-def _fetch_detailed_components(
-    db: Session,
-    std_crs_ids: List[int],
-    from_date: Optional[date],
-    to_date: Optional[date],
-) -> Dict[int, List[Dict[str, Any]]]:
-    if not std_crs_ids:
-        return {}
-
-    query = (
-        db.query(
-            models.IEMSCIAStudentCourses,
-            models.IEMSCIOccasionType,
-            models.IEMSCIAExamMaster,
-        )
-        .outerjoin(
-            models.IEMSCIOccasionType,
-            models.IEMSCIOccasionType.cia_occasion_type_id == models.IEMSCIAStudentCourses.occasion_id,
-        )
-        .outerjoin(
-            models.IEMSCIAExamMaster,
-            models.IEMSCIAExamMaster.id == models.IEMSCIAStudentCourses.cia_master_id,
-        )
-        .filter(models.IEMSCIAStudentCourses.std_crs_id.in_(std_crs_ids))
-    )
-    if from_date is not None:
-        query = query.filter(models.IEMSCIAStudentCourses.result_year >= from_date)
-    if to_date is not None:
-        query = query.filter(models.IEMSCIAStudentCourses.result_year <= to_date)
-
-    rows = query.all()
-    component_map: Dict[int, List[Dict[str, Any]]] = defaultdict(list)
-    for student_course, occasion, exam_master in rows:
-        occasion_name = (
-            getattr(occasion, "cia_occasion_type_desc", None)
-            or getattr(occasion, "cia_occasion_type_code", None)
-            or f"Occasion {student_course.occasion_id}"
-        )
-        component_map[student_course.std_crs_id].append(
-            {
-                "occasion_name": occasion_name,
-                "max_marks": float(exam_master.cia_max_marks)
-                if exam_master and exam_master.cia_max_marks is not None
-                else None,
-                "marks": float(student_course.secured_marks)
-                if student_course.secured_marks is not None
-                else None,
-                "source": "cia_student_courses",
-            }
-        )
-    return component_map
-
-
-def _fetch_student_lookup(
-    db: Session,
-    regnos: List[str],
-    usnos: List[str],
-) -> Dict[str, models.IEMStudents]:
-    filters = []
-    if regnos:
-        filters.append(models.IEMStudents.regno.in_(regnos))
-    if usnos:
-        filters.append(models.IEMStudents.usno.in_(usnos))
-    if not filters:
-        return {}
-
-    rows = db.query(models.IEMStudents).filter(or_(*filters)).all()
-    lookup: Dict[str, models.IEMStudents] = {}
+def get_term_options(db, academic_batch_id):
+    rows = _rows(db, """SELECT semester_id, semester_id AS crclm_term_id,
+        semester AS semester_number, semester_desc AS name FROM iems_semester
+        WHERE academic_batch_id = :batch AND semester IS NOT NULL
+        ORDER BY semester, semester_id""", {"batch": academic_batch_id})
     for row in rows:
-        if row.regno:
-            lookup[f"regno:{row.regno}"] = row
-        if row.usno:
-            lookup[f"usno:{row.usno}"] = row
-    return lookup
+        row["name"] = row["name"] or f"Semester {row['semester_number']}"
+    return rows
 
 
-def _log_student_identity_mismatches(
-    student_course_rows: List[models.StudentCourse],
-    student_lookup: Dict[str, models.IEMStudents],
-) -> None:
-    mismatches = []
-    for row in student_course_rows:
-        usno_match = bool(row.usno and student_lookup.get(f"usno:{row.usno}"))
-        regno_match = bool(row.regno and student_lookup.get(f"regno:{row.regno}"))
-        if not usno_match and not regno_match:
-            mismatches.append(
-                {
-                    "std_crs_id": row.std_crs_id,
-                    "student_course_usno": row.usno,
-                    "student_course_regno": row.regno,
-                    "crs_code": row.crs_code,
-                }
-            )
-        if len(mismatches) >= 5:
-            break
-
-    if mismatches:
-        print("Consolidated marks student identity mismatches:", mismatches)
+def _term(db, academic_batch_id, semester_id=None, crclm_term_id=None):
+    # crclm_term_id is retained only as an API alias for the new semester PK.
+    if semester_id is not None and crclm_term_id is not None and semester_id != crclm_term_id:
+        raise HTTPException(422, "semester_id and crclm_term_id must identify the same term")
+    term_id = semester_id if semester_id is not None else crclm_term_id
+    if term_id is None:
+        raise HTTPException(422, "Select a term")
+    rows = _rows(db, """SELECT semester_id, semester, semester_desc FROM iems_semester
+        WHERE academic_batch_id = :batch AND semester_id = :term""",
+        {"batch": academic_batch_id, "term": term_id})
+    if not rows or rows[0]["semester"] is None:
+        raise HTTPException(404, "Term does not belong to the selected curriculum")
+    return rows[0]
 
 
-def _resolve_student_identity(
-    student_course: models.StudentCourse,
-    student_lookup: Dict[str, models.IEMStudents],
-) -> Dict[str, Optional[str]]:
-    student = None
-    match_source = None
+MAPPED_COURSES = """
+    FROM cudos_map_courseto_course_instructor m
+    JOIN iems_courses c ON c.crs_id = m.crs_id
+    JOIN iems_semester sem ON sem.semester_id = m.semester_id
+        AND sem.academic_batch_id = m.academic_batch_id
+    JOIN cudos_master_type_details sec ON sec.mt_details_id = m.section_id
+    WHERE m.academic_batch_id = :batch AND m.semester_id = :term
+      AND c.academic_batch_id = m.academic_batch_id AND c.semester = sem.semester
+"""
 
-    if student_course.usno:
-        student = student_lookup.get(f"usno:{student_course.usno}")
-        if student is not None:
-            match_source = "usno"
 
-    if student is None and student_course.regno:
-        student = student_lookup.get(f"regno:{student_course.regno}")
-        if student is not None:
-            match_source = "regno"
+def get_section_options(db, academic_batch_id, semester_id=None, crclm_term_id=None):
+    term = _term(db, academic_batch_id, semester_id, crclm_term_id)
+    return _rows(db, "SELECT DISTINCT sec.mt_details_id AS section_id, "
+        "sec.mt_details_name AS section_name " + MAPPED_COURSES + " ORDER BY section_name",
+        {"batch": academic_batch_id, "term": term["semester_id"]})
 
-    resolved_usn = (
-        getattr(student, "usno", None)
-        or student_course.usno
-        or (None if _is_dummy_identifier(student_course.regno) else student_course.regno)
-        or f"STD-{student_course.std_crs_id}"
-    )
-    resolved_regno = getattr(student, "regno", None) or (
-        None if _is_dummy_identifier(student_course.regno) else student_course.regno
-    )
 
-    resolved_name = None
-    if student is not None:
-        resolved_name = getattr(student, "name", None) or " ".join(
-            [
-                part
-                for part in [
-                    getattr(student, "first_name", None),
-                    getattr(student, "middle_name", None),
-                    getattr(student, "last_name", None),
-                ]
-                if part
-            ]
-        ).strip()
+def get_course_options(db, academic_batch_id, semester_id=None, crclm_term_id=None, section_id=None):
+    term = _term(db, academic_batch_id, semester_id, crclm_term_id)
+    return _rows(db, """SELECT DISTINCT c.crs_id AS course_id, c.crs_code AS course_code,
+        COALESCE(c.crs_title, c.crs_code) AS course_title, c.semester """ + MAPPED_COURSES +
+        " AND (:section IS NULL OR m.section_id = :section) ORDER BY course_code, course_id",
+        {"batch": academic_batch_id, "term": term["semester_id"], "section": section_id})
 
-    if not resolved_name:
-        if student_course.usno:
-            resolved_name = f"Unknown Student ({student_course.usno})"
-        elif not _is_dummy_identifier(student_course.regno):
-            resolved_name = f"Unknown Student ({student_course.regno})"
-        else:
-            resolved_name = f"Unknown Student ({student_course.std_crs_id})"
 
-    return {
-        "student_usn": resolved_usn,
-        "student_name": resolved_name,
-        "regno": resolved_regno,
-        "match_source": match_source,
-        "student_identity_status": "matched" if student is not None else "fallback",
+def _number(value):
+    return None if value is None else round(float(value), 2)
+
+
+def _ems_data(db, params):
+    """Normalize EMS assessment marks without adding CIA aggregates twice."""
+    registrations = _rows(db, """SELECT sc.*, s.usno AS student_usn, c.crs_id,
+        c.cia_max_marks, c.ise_max_marks, c.mse_max_marks, c.see_max_marks,
+        c.viva_max_marks, c.tw_max_marks
+        FROM iems_student_courses sc
+        JOIN iems_courses c ON c.crs_code = sc.crs_code AND c.academic_batch_id = sc.batch_id
+            AND c.semester = sc.semester
+        JOIN iems_students s ON s.academic_batch_id = sc.batch_id
+            AND (s.usno = NULLIF(sc.usno, '') OR (s.regno = NULLIF(sc.regno, '')
+                AND NOT EXISTS (SELECT 1 FROM iems_students identified
+                    WHERE identified.academic_batch_id = sc.batch_id AND identified.usno = NULLIF(sc.usno, ''))))
+        JOIN iems_semester sem ON sem.semester_id = :term AND sem.academic_batch_id = :batch
+        WHERE sc.batch_id = :batch AND sc.semester = sem.semester AND c.crs_id IN :course_ids
+            AND COALESCE(sc.is_withdrawn, 0) = 0 AND COALESCE(sc.is_drop, 0) = 0
+        ORDER BY sc.result_year, sc.std_crs_id""", params, ("course_ids",))
+    latest = {(r["student_usn"], r["crs_id"]): r for r in registrations}
+    if not latest:
+        return {}, [], {}
+    details = _rows(db, """SELECT marks.id, marks.std_crs_id, marks.occasion_id,
+        marks.cia_master_id, marks.secured_marks, marks.is_absentee, marks.result_year,
+        occasion.cia_occasion_type_desc, occasion.cia_occasion_type_code,
+        master.cia_master_name, master.cia_max_marks
+        FROM iems_cia_student_courses marks
+        LEFT JOIN iems_cia_occasion_type occasion ON occasion.cia_occasion_type_id = marks.occasion_id
+        LEFT JOIN iems_cia_exam_master master ON master.id = marks.cia_master_id
+        WHERE marks.std_crs_id IN :ids ORDER BY marks.result_year, marks.id""",
+        {"ids": [r["std_crs_id"] for r in latest.values()]}, ("ids",))
+    by_registration = defaultdict(dict)
+    for d in details:
+        key = f"cia:{d['cia_master_id']}:{d['occasion_id']}"
+        by_registration[d["std_crs_id"]][key] = d
+    definitions, marks, totals = {}, [], {}
+    for identity, r in latest.items():
+        components = []
+        detailed = by_registration[r["std_crs_id"]]
+        for key, d in detailed.items():
+            label = d["cia_occasion_type_desc"] or d["cia_occasion_type_code"] or "CIA"
+            if d["cia_master_name"]:
+                label = f"{d['cia_master_name']} - {label}"
+            components.append((key, label, d["cia_max_marks"], d["secured_marks"], bool(d["is_absentee"])))
+        if not detailed:
+            if r["total_cia"] is not None:
+                components.append(("cia", "CIA Total", r["cia_max_marks"], r["total_cia"], False))
+            else:
+                for key in ("ise", "mse"):
+                    if r[f"total_{key}"] is not None:
+                        components.append((key, f"{key.upper()} Total", r[f"{key}_max_marks"], r[f"total_{key}"], False))
+        see = r["see_actual"] if r["see_actual"] is not None else r["see"]
+        tw = r["tw_marks_actual"] if r["tw_marks_actual"] is not None else r["tw_marks"]
+        for key, label, value, absent in (("see", "SEE", see, r["see_absentee"]),
+                ("viva", "Viva", r["viva_marks"], r["viva_absentee"]), ("tw", "TW", tw, r["tw_absentee"])):
+            if value is not None or absent:
+                components.append((key, label, r[f"{key}_max_marks"], value, bool(absent)))
+        if not components and r["cia_see"] is not None:
+            components.append(("combined", "CIA + SEE", (r["cia_max_marks"] or 0) + (r["see_max_marks"] or 0), r["cia_see"], False))
+        for key, label, maximum, value, absent in components:
+            definitions[(r["crs_id"], key)] = {"component_id": key, "occasion_name": label,
+                "max_marks": _number(maximum), "marks": None, "status": "missing", "source": "ems"}
+            # NULL without an explicit absence flag remains missing.
+            if value is not None or absent:
+                marks.append({"student_usn": r["student_usn"], "crs_id": r["crs_id"],
+                    "qpd_id": key, "total_marks": None if absent else value})
+        cia = r["total_cia"]
+        if cia is None:
+            internal = [r[k] for k in ("total_ise", "total_mse") if r[k] is not None]
+            if not internal:
+                internal = [d["secured_marks"] for d in detailed.values() if d["secured_marks"] is not None and not d["is_absentee"]]
+            cia = sum(internal) if internal else None
+        values = [v for v in (cia, None if r["see_absentee"] else see,
+            None if r["viva_absentee"] else r["viva_marks"], None if r["tw_absentee"] else tw) if v is not None]
+        totals[identity] = round(sum(values), 2) if values else (
+            _number(r["cia_see"]) if any(c[0] == "combined" for c in components) else None)
+    return definitions, marks, totals
+
+
+def get_organisation_marks_source(db, org_id):
+    organisations = _rows(db, "SELECT marks_fetch_from FROM iems_organisation WHERE org_id = :org_id", {"org_id": org_id})
+    if not organisations:
+        raise HTTPException(404, "Organisation not found")
+    setting = organisations[0]["marks_fetch_from"]
+    if setting is None:
+        raise HTTPException(422, "Marks source is not configured for this organisation")
+    # CodeIgniter uses 0 for LMS; a nonzero setting selects EMS.
+    return "lms" if int(setting) == 0 else "ems"
+
+
+def build_consolidated_student_marks_report(db, request, org_id=1):
+    marks_source = get_organisation_marks_source(db, org_id)
+    term = _term(db, request.academic_batch_id, request.semester_id, request.crclm_term_id)
+    batches = _rows(db, """SELECT academic_batch_desc, academic_batch_code, dept_id
+        FROM iems_academic_batch WHERE academic_batch_id = :batch""",
+        {"batch": request.academic_batch_id})
+    if not batches or (request.department_id is not None and batches[0]["dept_id"] != request.department_id):
+        raise HTTPException(404, "Curriculum does not belong to the selected department")
+    sections = get_section_options(db, request.academic_batch_id, term["semester_id"])
+    section = next((s for s in sections if s["section_id"] == request.section_id), None)
+    if section is None:
+        raise HTTPException(404, "Section is not mapped to the selected curriculum and term")
+    courses = get_course_options(db, request.academic_batch_id, term["semester_id"], section_id=request.section_id)
+    if request.course_ids is not None:
+        if not request.course_ids:
+            raise HTTPException(422, "Select at least one course")
+        if set(request.course_ids) - {c["course_id"] for c in courses}:
+            raise HTTPException(422, "Selected courses are not mapped to this section and term")
+        courses = [c for c in courses if c["course_id"] in request.course_ids]
+    filters = {
+        "department_id": request.department_id, "academic_batch_id": request.academic_batch_id,
+        "academic_batch_name": batches[0]["academic_batch_desc"] or batches[0]["academic_batch_code"],
+        "semester_id": term["semester_id"], "crclm_term_id": term["semester_id"],
+        "semester_number": term["semester"], "term_name": term["semester_desc"] or f"Semester {term['semester']}",
+        **section, "selected_course_ids": [c["course_id"] for c in courses],
+        "include_total_marks": request.include_total_marks,
+        "start_range": request.start_range, "end_range": request.end_range,
+        "include_absents": request.include_absents,
+        "marks_source": marks_source,
     }
-
-
-def build_consolidated_student_marks_report(
-    db: Session,
-    request,
-) -> Dict[str, Any]:
-    print(
-        "Consolidated marks incoming request:",
-        {
-            "academic_batch_id": request.academic_batch_id,
-            "semester_id": request.semester_id,
-            "crclm_term_id": request.crclm_term_id,
-            "section_id": request.section_id,
-            "course_ids": request.course_ids or [],
-            "include_total_marks": request.include_total_marks,
-            "from_date": request.from_date,
-            "to_date": request.to_date,
-        },
-    )
-
-    if (
-        request.from_date is not None
-        and request.to_date is not None
-        and request.from_date > request.to_date
-    ):
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="from_date cannot be greater than to_date",
-        )
-
-    requested_semester = request.crclm_term_id or request.semester_id
-    if requested_semester is None:
-        raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-            detail="semester_id or crclm_term_id is required",
-        )
-
-    batch = db.query(models.IEMSAcademicBatch).filter(
-        models.IEMSAcademicBatch.academic_batch_id == request.academic_batch_id
-    ).first()
-    if batch is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Academic batch not found",
-        )
-    if request.department_id is not None and batch.dept_id != request.department_id:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Academic batch does not belong to the selected department",
-        )
-
-    semester_context = _resolve_semester_context(
-        db,
-        request.academic_batch_id,
-        requested_semester,
-    )
-    if semester_context["resolved_semester_number"] is None:
-        raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND,
-            detail="Unable to resolve semester for the selected term",
-        )
-
-    section_row = None
-    if request.section_id is not None:
-        section_row = db.query(models.IEMSection).filter(
-            models.IEMSection.id == request.section_id
-        ).first()
-        if section_row is None:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Section not found",
-            )
-        if section_row.academic_batch_id != request.academic_batch_id:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Section does not belong to the selected curriculum",
-            )
-
-    selected_course_ids = request.course_ids or []
-    course_lookup = _build_course_lookup(
-        db,
-        request.academic_batch_id,
-        semester_context["resolved_semester_number"],
-        selected_course_ids,
-    )
-    if selected_course_ids:
-        missing_course_ids = sorted(
-            set(selected_course_ids) - {row.crs_id for row in course_lookup.values()}
-        )
-        if missing_course_ids:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail=f"Invalid course_ids for the selected curriculum/term: {missing_course_ids}",
-            )
-
-    selected_course_codes = list(course_lookup.keys())
-    print(
-        "Consolidated marks resolved selected courses:",
-        [
-            {
-                "course_id": row.crs_id,
-                "course_code": row.crs_code,
-                "semester": row.semester,
+    if not courses:
+        return {"filters": filters, "rows": [], "courses": []}
+    params = {"batch": request.academic_batch_id, "term": term["semester_id"],
+              "section": request.section_id, "course_ids": filters["selected_course_ids"]}
+    # A released question paper identifies an assessment, even when names repeat.
+    assessments = _rows(db, """SELECT qp.qpd_id, qp.crs_id, qp.qpd_title,
+        qp.qpd_max_marks, ao.ao_id, ao.ao_name, ao.max_marks, ao.section_id
+        FROM cudos_qp_definition qp
+        LEFT JOIN iems_assessment_occasions ao ON ao.qpd_id = qp.qpd_id
+            AND ao.crs_id = qp.crs_id AND ao.academic_batch_id = qp.academic_batch_id
+            AND ao.semester_id = qp.semester_id
+        WHERE qp.academic_batch_id = :batch AND qp.semester_id = :term
+          AND qp.crs_id IN :course_ids AND qp.qp_rollout > 1
+          AND (ao.section_id = :section OR ao.mte_flag = 1 OR qp.qpd_type = 5)
+        ORDER BY qp.crs_id, qp.qpd_id, ao.ao_id""", params, ("course_ids",))
+    definitions = {}
+    for a in assessments:
+        key = (a["crs_id"], a["qpd_id"])
+        # Prefer the selected section's description/max over a shared occasion.
+        if key not in definitions or a["section_id"] == request.section_id:
+            definitions[key] = {
+                "component_id": str(a["qpd_id"]),
+                "occasion_name": a["ao_name"] or a["qpd_title"] or f"Assessment {a['qpd_id']}",
+                "max_marks": _number(a["max_marks"] if a["max_marks"] is not None else a["qpd_max_marks"]),
+                "marks": None, "status": "missing", "source": "lms_assessment",
             }
-            for row in course_lookup.values()
-        ],
-    )
-
-    roster_query = _base_student_course_query(
-        db,
-        request.academic_batch_id,
-        semester_context["resolved_semester_number"],
-        getattr(section_row, "section", None),
-    )
-    if section_row is not None and section_row.section:
-        if section_row.semester_id not in {
-            semester_context["resolved_semester_id"],
-            semester_context["resolved_semester_number"],
-        }:
-            raise HTTPException(
-                status_code=status.HTTP_404_NOT_FOUND,
-                detail="Section does not belong to the selected term",
-            )
-    roster_rows = roster_query.order_by(
-        models.StudentCourse.regno.asc(),
-        models.StudentCourse.crs_code.asc(),
-    ).all()
-
-    student_course_query = roster_query
-    if selected_course_codes:
-        student_course_query = student_course_query.filter(
-            models.StudentCourse.crs_code.in_(selected_course_codes)
-        )
-
-    student_course_rows = student_course_query.order_by(
-        models.StudentCourse.regno.asc(),
-        models.StudentCourse.crs_code.asc(),
-    ).all()
-    print(
-        "Consolidated marks roster size and filtered row count:",
-        {
-            "roster_rows": len(roster_rows),
-            "filtered_rows": len(student_course_rows),
-            "selected_course_codes": selected_course_codes,
-        },
-    )
-    std_crs_ids = [row.std_crs_id for row in student_course_rows]
-    detailed_component_map = _fetch_detailed_components(
-        db,
-        std_crs_ids,
-        request.from_date,
-        request.to_date,
-    )
-    student_lookup = _fetch_student_lookup(
-        db,
-        [row.regno for row in roster_rows if row.regno],
-        [row.usno for row in roster_rows if row.usno],
-    )
-    _log_student_identity_mismatches(roster_rows, student_lookup)
-
-    rows_by_student: Dict[str, Dict[str, Any]] = {}
-    for student_course in roster_rows:
-        identity = _resolve_student_identity(student_course, student_lookup)
-        student_key = f"{identity['student_usn']}|{identity['regno'] or ''}"
-        if student_key not in rows_by_student:
-            rows_by_student[student_key] = {
-                "student_usn": identity["student_usn"],
-                "student_name": identity["student_name"],
-                "regno": identity["regno"],
-                "section": student_course.section,
-                "student_identity_status": identity["student_identity_status"],
-                "courses": [],
-                "_course_map": {},
-            }
-
-    for student_course in student_course_rows:
-        course = course_lookup.get(student_course.crs_code)
-        if course is None:
+    # Use explicit course enrollment for elective/batch membership. For regular
+    # courses, the current student's curriculum and section form the roster.
+    roster = _rows(db, """SELECT DISTINCT s.student_id, s.usno, s.regno, s.name,
+        s.first_name, s.middle_name, s.last_name, c.crs_id
+        FROM iems_students s
+        JOIN iems_courses c ON c.crs_id IN :course_ids
+        JOIN cudos_master_type_details sec ON sec.mt_details_id = :section
+        WHERE (COALESCE(c.edu_sys_flag, 0) = 0 AND s.academic_batch_id = :batch
+            AND s.section = sec.mt_details_name AND COALESCE(sec.parent_id, 0) = 0)
+        OR EXISTS (SELECT 1 FROM cudos_map_courseto_student enrollment
+            WHERE enrollment.student_id = s.student_id AND enrollment.crs_id = c.crs_id
+              AND enrollment.semester_id = :term
+              AND (enrollment.academic_batch_id = :batch OR s.academic_batch_id = :batch)
+              AND ((COALESCE(sec.parent_id, 0) = 0 AND enrollment.section_id = :section)
+                OR (COALESCE(sec.parent_id, 0) > 0 AND enrollment.batch_id = :section)))
+        ORDER BY s.usno, s.student_id, c.crs_id""", params, ("course_ids",))
+    marks = _rows(db, """SELECT sat.sat_id, sat.student_usn, sat.crs_id, sat.qpd_id,
+        sat.total_marks FROM cudos_student_assessment_totalmarks sat
+        JOIN cudos_qp_definition qp ON qp.qpd_id = sat.qpd_id AND qp.crs_id = sat.crs_id
+        WHERE qp.academic_batch_id = :batch AND qp.semester_id = :term
+          AND sat.crs_id IN :course_ids AND qp.qp_rollout > 1
+          AND (sat.section_id = :section OR ((sat.section_id IS NULL OR sat.section_id = 0)
+            AND (qp.qpd_type = 5 OR EXISTS (SELECT 1 FROM iems_assessment_occasions ao
+                WHERE ao.qpd_id = qp.qpd_id AND ao.crs_id = qp.crs_id AND ao.mte_flag = 1))))
+        ORDER BY sat.sat_id""", params, ("course_ids",))
+    marks_by_student = {}
+    for mark in marks:
+        # Latest persisted total wins; duplicate totals must never be summed.
+        marks_by_student[(mark["student_usn"], mark["crs_id"], str(mark["qpd_id"]))] = mark
+    official_totals = {}
+    if marks_source == "ems":
+        definitions, marks, official_totals = _ems_data(db, params)
+        marks_by_student = {(m["student_usn"], m["crs_id"], str(m["qpd_id"])): m for m in marks}
+    students = {}
+    membership = defaultdict(set)
+    for s in roster:
+        membership[s["student_id"]].add(s["crs_id"])
+        students[s["student_id"]] = s
+    headers = []
+    for course in courses:
+        headers.append({**course, "components": [dict(d) for (cid, _), d in definitions.items()
+                                                  if cid == course["course_id"]]})
+    rows = []
+    ranged = request.start_range is not None
+    for student_id, s in students.items():
+        row_courses = []
+        any_match = False
+        for course in headers:
+            components = []
+            enrolled = course["course_id"] in membership[student_id]
+            for definition in course["components"]:
+                component = dict(definition)
+                mark = marks_by_student.get((s["usno"], course["course_id"], component["component_id"])) if enrolled else None
+                if mark is not None:
+                    value = _number(mark["total_marks"])
+                    matches = not ranged or (value is None and request.include_absents) or (
+                        value is not None and request.start_range <= value <= request.end_range)
+                    if matches:
+                        component.update(marks=value, status="absent" if value is None else "marked")
+                        any_match = True
+                    else:
+                        component["status"] = "filtered"
+                components.append(component)
+            numeric = [c["marks"] for c in components if c["marks"] is not None]
+            total = round(sum(numeric), 2) if numeric else None
+            if marks_source == "ems" and not ranged and enrolled:
+                total = official_totals.get((s["usno"], course["course_id"]), total)
+            row_courses.append({**course, "components": components,
+                "total_marks": total,
+                "data_available": enrolled and any(c["status"] in ("marked", "absent") for c in components)})
+        if ranged and not any_match:
             continue
+        name = s["name"] or " ".join(p for p in (s["first_name"], s["middle_name"], s["last_name"]) if p)
+        rows.append({"sl_no": len(rows) + 1, "student_usn": s["usno"] or s["regno"] or str(student_id),
+            "student_name": name or s["usno"] or str(student_id), "regno": s["regno"],
+            "section": section["section_name"], "student_identity_status": "matched", "courses": row_courses})
+    return {"filters": filters, "rows": rows, "courses": headers}
 
-        identity = _resolve_student_identity(student_course, student_lookup)
-        student_key = f"{identity['student_usn']}|{identity['regno'] or ''}"
-        components = _build_components(
-            student_course,
-            course,
-            detailed_component_map.get(student_course.std_crs_id, []),
-        )
-        total_marks = None
+
+def build_consolidated_student_marks_graph(db, request, org_id=1):
+    report = build_consolidated_student_marks_report(db, request, org_id)
+    summaries = []
+    for course in report["courses"]:
+        enrolled = [c for r in report["rows"] for c in r["courses"] if c["course_id"] == course["course_id"]]
+        totals = [c["total_marks"] for c in enrolled if c["total_marks"] is not None]
+        assessments = []
+        for definition in course["components"]:
+            components = [component for c in enrolled for component in c["components"]
+                          if component["component_id"] == definition["component_id"]]
+            values = [c["marks"] for c in components if c["marks"] is not None]
+            assessments.append({"component_id": definition["component_id"],
+                "occasion_name": definition["occasion_name"], "max_marks": definition["max_marks"],
+                "student_count": len(values), "absent_count": sum(c["status"] == "absent" for c in components),
+                "average_marks": round(sum(values) / len(values), 2) if values else None})
+        summaries.append({"course_id": course["course_id"], "course_code": course["course_code"],
+            "course_title": course["course_title"], "student_count": len(totals),
+            "average_marks": round(sum(totals) / len(totals), 2) if totals else None,
+            "highest_marks": max(totals) if totals else None, "lowest_marks": min(totals) if totals else None,
+            "assessments": assessments})
+    return {"filters": report["filters"], "courses": summaries}
+
+
+def export_consolidated_student_marks_report(db, request, org_id=1):
+    report = build_consolidated_student_marks_report(db, request, org_id)
+    headers = ["Sl. No", "USN", "Student Name"]
+    columns = []
+    for course in report["courses"]:
+        for component in course["components"]:
+            headers.append(f"{course['course_code']} - {component['occasion_name']} ({component['max_marks'] if component['max_marks'] is not None else '-'})")
+            columns.append((course["course_id"], component["component_id"]))
         if request.include_total_marks:
-            numeric_marks = [
-                component["marks"]
-                for component in components
-                if component["marks"] is not None
-            ]
-            total_marks = round(sum(numeric_marks), 2) if numeric_marks else 0.0
-
-        rows_by_student[student_key]["_course_map"][course.crs_id] = {
-            "course_id": course.crs_id,
-            "course_code": course.crs_code,
-            "course_title": course.crs_title or course.crs_code,
-            "components": components,
-            "total_marks": total_marks,
-            "data_available": len(components) > 0,
-        }
-
-    report_rows = []
-    for index, student_row in enumerate(
-        sorted(
-            rows_by_student.values(),
-            key=lambda item: (item["student_name"], item["student_usn"]),
-        ),
-        start=1,
-    ):
-        student_row["sl_no"] = index
-        for course in course_lookup.values():
-            if course.crs_id not in student_row["_course_map"]:
-                student_row["_course_map"][course.crs_id] = {
-                    "course_id": course.crs_id,
-                    "course_code": course.crs_code,
-                    "course_title": course.crs_title or course.crs_code,
-                    "components": [],
-                    "total_marks": 0.0 if request.include_total_marks else None,
-                    "data_available": False,
-                }
-        student_row["courses"] = sorted(
-            list(student_row["_course_map"].values()),
-            key=lambda course_row: (course_row["course_code"], course_row["course_id"]),
-        )
-        del student_row["_course_map"]
-        report_rows.append(student_row)
-
-    return {
-        "filters": _build_resolved_filters(
-            request,
-            semester_context,
-            section_row=section_row,
-            selected_course_ids=[course.crs_id for course in course_lookup.values()],
-        ),
-        "rows": report_rows,
-    }
-
-
-def build_consolidated_student_marks_graph(
-    db: Session,
-    request,
-) -> Dict[str, Any]:
-    report = build_consolidated_student_marks_report(db, request)
-    course_stats: Dict[int, Dict[str, Any]] = {}
-    course_thresholds: Dict[int, Optional[float]] = {}
-
-    for student_row in report["rows"]:
-        for course_row in student_row["courses"]:
-            marks_value = course_row["total_marks"]
-            if marks_value is None:
-                marks_value = round(
-                    sum(
-                        component["marks"]
-                        for component in course_row["components"]
-                        if component["marks"] is not None
-                    ),
-                    2,
-                )
-
-            stats = course_stats.setdefault(
-                course_row["course_id"],
-                {
-                    "course_id": course_row["course_id"],
-                    "course_code": course_row["course_code"],
-                    "course_title": course_row["course_title"],
-                    "marks": [],
-                },
-            )
-            stats["marks"].append(float(marks_value))
-
-            if course_row["course_id"] not in course_thresholds:
-                course = db.query(models.IEMSCourses).filter(
-                    models.IEMSCourses.crs_id == course_row["course_id"]
-                ).first()
-                course_thresholds[course_row["course_id"]] = (
-                    getattr(course, "min_passing_marks", None) if course else None
-                )
-
-    graph_rows = []
-    for course_id, stats in sorted(
-        course_stats.items(),
-        key=lambda item: item[1]["course_code"],
-    ):
-        marks = stats["marks"]
-        average = round(sum(marks) / len(marks), 2) if marks else 0.0
-        highest = round(max(marks), 2) if marks else 0.0
-        lowest = round(min(marks), 2) if marks else 0.0
-        min_passing_marks = course_thresholds.get(course_id)
-        pass_count = None
-        fail_count = None
-        if min_passing_marks is not None:
-            pass_count = len(
-                [mark for mark in marks if mark >= float(min_passing_marks)]
-            )
-            fail_count = len(marks) - pass_count
-
-        graph_rows.append(
-            {
-                "course_id": stats["course_id"],
-                "course_code": stats["course_code"],
-                "course_title": stats["course_title"],
-                "student_count": len(marks),
-                "average_marks": average,
-                "highest_marks": highest,
-                "lowest_marks": lowest,
-                "min_passing_marks": float(min_passing_marks)
-                if min_passing_marks is not None
-                else None,
-                "pass_count": pass_count,
-                "fail_count": fail_count,
-            }
-        )
-
-    return {
-        "filters": report["filters"],
-        "courses": graph_rows,
-    }
+            headers.append(f"{course['course_code']} - Total")
+            columns.append((course["course_id"], None))
+    data = []
+    for student in report["rows"]:
+        courses = {c["course_id"]: c for c in student["courses"]}
+        row = [student["sl_no"], student["student_usn"], student["student_name"]]
+        for cid, component_id in columns:
+            course = courses[cid]
+            if component_id is None:
+                value = course["total_marks"]
+            else:
+                component = next(c for c in course["components"] if c["component_id"] == component_id)
+                value = "AB" if component["status"] == "absent" else component["marks"]
+            row.append("-" if value is None else value)
+        data.append(row)
+    # Treat user-origin text as literal text in spreadsheet applications.
+    def safe(value):
+        if isinstance(value, str) and value.lstrip().startswith(("=", "+", "-", "@")):
+            return "'" + value
+        return value
+    if request.format == "csv":
+        buffer = StringIO(newline="")
+        writer = csv.writer(buffer)
+        writer.writerows([[safe(v) for v in row] for row in [headers, *data]])
+        return buffer.getvalue().encode("utf-8-sig"), "text/csv", "csv"
+    if request.format == "excel":
+        from openpyxl import Workbook
+        from openpyxl.styles import Font, PatternFill
+        from openpyxl.utils import get_column_letter
+        workbook = Workbook()
+        sheet = workbook.active
+        sheet.title = "Consolidated Marks"
+        for row in [headers, *data]:
+            sheet.append([safe(v) for v in row])
+        sheet.freeze_panes = "D2"
+        sheet.auto_filter.ref = sheet.dimensions
+        for cell in sheet[1]:
+            cell.font = Font(bold=True, color="FFFFFF")
+            cell.fill = PatternFill("solid", fgColor="24466B")
+        for index in range(1, len(headers) + 1):
+            sheet.column_dimensions[get_column_letter(index)].width = 28 if index > 2 else 18
+        buffer = BytesIO()
+        workbook.save(buffer)
+        return buffer.getvalue(), "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", "xlsx"
+    from html import escape
+    from reportlab.lib import colors
+    from reportlab.lib.pagesizes import A4, landscape
+    from reportlab.lib.styles import getSampleStyleSheet
+    from reportlab.platypus import SimpleDocTemplate, Table, TableStyle, Paragraph, PageBreak
+    buffer = BytesIO()
+    styles = getSampleStyleSheet()
+    story = []
+    # Split wide reports horizontally, repeating student identity on every page.
+    for start in range(3, max(len(headers), 4), 6):
+        indices = [0, 1, 2] + list(range(start, min(start + 6, len(headers))))
+        if story:
+            story.append(PageBreak())
+        story.append(Paragraph("Consolidated Student Marks Report", styles["Heading2"]))
+        story.append(Paragraph(escape(f"{report['filters']['academic_batch_name']} / {report['filters']['term_name']} / {report['filters']['section_name']}"), styles["Normal"]))
+        cells = [[Paragraph(escape(str(row[i])), styles["Normal"]) for i in indices] for row in [headers, *data]]
+        table = Table(cells, repeatRows=1, colWidths=[36, 88, 135] + [78] * (len(indices) - 3))
+        table.setStyle(TableStyle([("BACKGROUND", (0, 0), (-1, 0), colors.lightgrey),
+            ("GRID", (0, 0), (-1, -1), .3, colors.grey), ("VALIGN", (0, 0), (-1, -1), "TOP")]))
+        story.append(table)
+    SimpleDocTemplate(buffer, pagesize=landscape(A4), leftMargin=30, rightMargin=30).build(story)
+    return buffer.getvalue(), "application/pdf", "pdf"

@@ -2344,6 +2344,7 @@ class IEMOnlineUserPermissions(Base):
 class IEMOrganisation(Base):
     __tablename__ = 'iems_organisation'
 
+    # Existing columns
     org_id = Column(Integer, primary_key=True, autoincrement=True)
     org_name = Column(String(500), nullable=False)
     org_society = Column(String(200), nullable=True)
@@ -2356,8 +2357,115 @@ class IEMOrganisation(Base):
     modify_date = Column(Date, nullable=True)
     org_code = Column(String(10), nullable=True)
     org_type_id = Column(Integer, nullable=True)
+    org_location = Column(String(100), nullable=True)
+    org_contact_number = Column(String(100), nullable=True)
+    org_email = Column(String(100), nullable=True)
+    org_logo = Column(String(40), nullable=True)
     profile_image = Column(String(45), nullable=True)
     other_profile_image = Column(String(45), nullable=True)
+
+    # ---------------------------------------------------------
+    # Columns migrated from organisation
+    # ---------------------------------------------------------
+
+    org_type = Column(String(10), nullable=True)
+
+    vision = Column(Text, nullable=True)
+    mandate = Column(Text, nullable=True)
+    mission = Column(Text, nullable=True)
+
+    theory_iso_code = Column(String(50), nullable=True)
+    lab_iso_code = Column(String(50), nullable=True)
+
+    education_system_flag = Column(Integer, nullable=True, default=0)
+    oe_pi_flag = Column(Integer, nullable=True, default=0)
+    clo_bl_flag = Column(Integer, nullable=False, default=0)
+    faculty_display_mode_flag = Column(Integer, nullable=False, default=0)
+    indv_mapping_justify_flag = Column(Integer, nullable=True, default=0)
+    mte_flag = Column(Integer, nullable=True, default=0)
+
+    base_url = Column(String(500), nullable=True)
+    tee_section_flag = Column(Integer, nullable=False, default=0)
+
+    captcha_status = Column(Integer, nullable=False, default=0)
+    captcha_attempts = Column(Integer, nullable=False, default=1)
+    crs_unitization_flag = Column(Integer, nullable=False, default=0)
+
+    bos_approval = Column(Integer, nullable=False, default=0)
+    reviewer_approval = Column(Integer, nullable=False, default=0)
+    target_set_by = Column(Integer, nullable=False, default=1)
+
+    FY_section = Column(Integer, nullable=False, default=0)
+    BW_section = Column(Integer, nullable=False, default=0)
+    roll_number_flag = Column(Integer, nullable=False, default=0)
+
+    lesson_plan_type = Column(Integer, nullable=False, default=0)
+    tlo_flag = Column(Integer, nullable=False, default=1)
+    bos_flag = Column(Integer, nullable=False, default=0)
+    ionlms_flag = Column(Integer, nullable=False, default=0)
+
+    po_dirt_indirt_flag = Column(Integer, nullable=False, default=0)
+    co_wise_threshold_flag = Column(Integer, nullable=True, default=0)
+    univ_type_flag = Column(Integer, nullable=True, default=0)
+
+    lms_academic_monitor_rpt_flag = Column(
+        Integer, nullable=False, default=0
+    )
+    qp_or_mapping_flag = Column(Integer, nullable=False, default=0)
+    fp_max_attempts = Column(Integer, nullable=False, default=0)
+
+    student_target = Column(Integer, nullable=False, default=0)
+    tee_student_marks_import_section_wise = Column(
+        Integer, nullable=False, default=0
+    )
+    student_passing_marks = Column(Integer, nullable=False, default=3)
+    stud_marks_download = Column(Integer, nullable=True, default=0)
+    crclm_stud_record_flag = Column(Integer, nullable=True, default=0)
+
+    # SMS configuration
+    sms_alert_flag = Column(Integer, nullable=True, default=0)
+    sms_user = Column(String(45), nullable=True)
+    sms_pass = Column(String(500), nullable=True)
+    sms_api_key = Column(String(255), nullable=True)
+    sms_type = Column(String(20), nullable=False, default='TRANS')
+    sms_from = Column(String(45), nullable=True)
+    sms_url = Column(String(250), nullable=True)
+
+    sms_api_version = Column(
+        Enum('OLD', 'V2', name='sms_api_version'),
+        nullable=False,
+        default='OLD'
+    )
+
+    marks_fetch_from = Column(Integer, nullable=True)
+    lms_stud_crs_reg = Column(Integer, nullable=False, default=0)
+
+    email = Column(Integer, nullable=False, default=0)
+
+    lms_mmp_flag = Column(Integer, nullable=False, default=0)
+    lms_student_picture_flag = Column(Integer, nullable=False, default=0)
+
+    std_app_flag = Column(Integer, nullable=False, default=0)
+    parent_app_flag = Column(Integer, nullable=False, default=0)
+
+    ionedu_flag = Column(Integer, nullable=False, default=0)
+    ems_integration = Column(Integer, nullable=False, default=0)
+
+    # WhatsApp configuration
+    whatsapp_notification = Column(Integer, nullable=True, default=0)
+    whatsapp_integration_type = Column(Integer, nullable=True, default=0)
+    whatsapp_provider_name = Column(String(50), nullable=True)
+
+    student_show_quiz_marks = Column(Integer, nullable=True, default=0)
+
+    lms_att_mark_window = Column(String(20), nullable=True)
+
+    enable_crs_reg_by_stud = Column(Integer, nullable=True, default=0)
+    ai_enable_flag = Column(Integer, nullable=True, default=0)
+
+    attendance_enable_all = Column(Integer, nullable=False, default=1)
+
+    dvs_integration = Column(Integer, nullable=False, default=0)
 
 
 class IEMOrganisationType(Base):

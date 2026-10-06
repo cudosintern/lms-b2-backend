@@ -8,8 +8,8 @@ from datetime import datetime
 from types import SimpleNamespace as Row
 from unittest.mock import MagicMock, patch
 
-from fastapi import FastAPI
-from .router import router, service, actor
+from fastapi import FastAPI, Request, HTTPException
+from .router import router, service, actor, demo_identity
 from .service import RegistrationService
 from .schemas import ConfigurationSave, CourseSave
 
@@ -143,7 +143,7 @@ class HttpContractTest(unittest.TestCase):
             id=7, active=True, is_locked=False, org_id=1, super_admin=True, user_dept_id=2)
         db.execute.return_value.all.return_value = []
         with patch.dict("os.environ", {"SECRET_KEY": "test-secret", "ALGORITHM": "HS256"}):
-            result = actor(token=token, org_id=1, db=db)
+            result = actor(request=Request({"type": "http", "client": ("127.0.0.1", 123)}), token=token, org_id=1, db=db)
         self.assertEqual(result["user_id"], 7)
         self.assertEqual(result["org_id"], 1)
 
@@ -167,6 +167,54 @@ class HttpContractTest(unittest.TestCase):
         self.assertEqual(response.status_code, 200)
         self.assertTrue(response.content.startswith(b"%PDF"))
         self.assertIn("application/pdf", response.headers["content-type"])
+
+
+class LocalDemoTest(unittest.TestCase):
+    def setUp(self):
+        self.env = dict(ENV="development", APP_ENV="", ENVIRONMENT="", COURSE_REGISTRATION_ALLOW_LOCAL_DEMO="true",
+            COURSE_REGISTRATION_DEMO_USER_ID="1", COURSE_REGISTRATION_DEMO_ORG_ID="1")
+        self.request = Request({"type": "http", "client": ("127.0.0.1", 123)})
+
+    def test_explicit_local_demo_identity(self):
+        with patch.dict("os.environ", self.env):
+            self.assertEqual(demo_identity("demo-token-12345", self.request, 1), 1)
+
+    def test_disabled_production_and_remote_demo_rejected(self):
+        for values, host in [({"COURSE_REGISTRATION_ALLOW_LOCAL_DEMO": "false"}, "127.0.0.1"),
+            ({"ENV": "production"}, "127.0.0.1"), ({"APP_ENV": "production"}, "127.0.0.1"), ({}, "192.168.1.2")]:
+            with self.subTest(values=values, host=host), patch.dict("os.environ", {**self.env, **values}), self.assertRaises(HTTPException) as raised:
+                demo_identity("demo-token-12345", Request({"type": "http", "client": (host, 123)}), 1)
+            self.assertEqual(raised.exception.status_code, 401)
+
+    def test_cannot_choose_another_organisation(self):
+        with patch.dict("os.environ", self.env), self.assertRaises(HTTPException) as raised:
+            demo_identity("demo-token-12345", self.request, 2)
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_other_tokens_never_use_demo_identity(self):
+        with patch.dict("os.environ", self.env):
+            self.assertIsNone(demo_identity("random-invalid-token", self.request, 1))
+
+    def test_demo_still_requires_active_account(self):
+        db = MagicMock()
+        db.query.return_value.options.return_value.filter.return_value.first.return_value = None
+        with patch.dict("os.environ", self.env), self.assertRaises(HTTPException) as raised:
+            actor(request=self.request, token="demo-token-12345", org_id=1, db=db)
+        self.assertEqual(raised.exception.status_code, 403)
+
+    def test_legacy_unspecified_active_flag_and_explicit_disabled_flag(self):
+        for active, allowed in [(None, True), (True, True), (False, False)]:
+            db = MagicMock()
+            db.query.return_value.options.return_value.filter.return_value.first.return_value = Row(
+                id=1, active=active, is_locked=False, org_id=1, super_admin=True, user_dept_id=None)
+            db.execute.return_value.all.return_value = []
+            with self.subTest(active=active), patch.dict("os.environ", self.env):
+                if allowed:
+                    self.assertEqual(actor(request=self.request, token="demo-token-12345", org_id=1, db=db)["user_id"], 1)
+                else:
+                    with self.assertRaises(HTTPException) as raised:
+                        actor(request=self.request, token="demo-token-12345", org_id=1, db=db)
+                    self.assertEqual(raised.exception.status_code, 403)
 
 
 if __name__ == "__main__": unittest.main()

@@ -294,7 +294,18 @@ def get_student_academic_batches(
 
         result = []
 
-        for batch in batches:
+        # Reports remain accessible even if their mentoring-group mapping is missing.
+        report_batch_ids = db.query(LMSIssuesObservations.academic_batch_id).filter(
+            LMSIssuesObservations.ssd_id == student_id,
+            LMSIssuesObservations.is_deleted == 0
+        )
+        report_batches = db.query(IEMSAcademicBatch).filter(
+            IEMSAcademicBatch.academic_batch_id.in_(report_batch_ids)
+        ).all()
+        batches_by_id = {batch.academic_batch_id: batch for batch in batches}
+        batches_by_id.update({batch.academic_batch_id: batch for batch in report_batches})
+
+        for batch in sorted(batches_by_id.values(), key=lambda item: item.academic_batch_desc or ""):
             result.append({
                 "academic_batch_id": batch.academic_batch_id,
                 "academic_batch_code": batch.academic_batch_code,
@@ -337,7 +348,19 @@ def get_student_semesters(
 
         result = []
 
-        for semester in semesters:
+        # Restrict fallback terms to this student's non-deleted reports in this batch.
+        report_semester_ids = db.query(LMSIssuesObservations.semester_id).filter(
+            LMSIssuesObservations.ssd_id == student_id,
+            LMSIssuesObservations.academic_batch_id == academic_batch_id,
+            LMSIssuesObservations.is_deleted == 0
+        )
+        report_semesters = db.query(IEMSemester).filter(
+            IEMSemester.semester_id.in_(report_semester_ids)
+        ).all()
+        semesters_by_id = {semester.semester_id: semester for semester in semesters}
+        semesters_by_id.update({semester.semester_id: semester for semester in report_semesters})
+
+        for semester in sorted(semesters_by_id.values(), key=lambda item: item.semester_id):
             result.append({
                 "semester_id": semester.semester_id,
                 "semester": semester.semester
@@ -437,7 +460,8 @@ def get_student_issue_observation_history(
         ).filter(
             LMSIssuesObservationsHistory.lms_isnob_id == lms_isnob_id
         ).order_by(
-            LMSIssuesObservationsHistory.action_timestamp.desc()
+            LMSIssuesObservationsHistory.action_timestamp.desc(),
+            LMSIssuesObservationsHistory.history_id.desc()
         ).all()
 
         result = []
@@ -455,6 +479,12 @@ def get_student_issue_observation_history(
                 "action_type": item.action_type,
 
                 "action_timestamp": item.action_timestamp,
+
+                # Trigger snapshots preserve the recorded actor. Do not assume
+                # mentor_users_id identifies the person who performed the action.
+                "created_by": item.created_by,
+                "modified_by": item.modified_by,
+                "actor_id": item.created_by if item.action_type == "insert" else item.modified_by,
 
                 "report_title": item.report_title,
 

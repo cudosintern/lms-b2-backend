@@ -1,7 +1,8 @@
 from datetime import date
 from typing import List, Optional
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
+from typing import Literal
 
 
 class DropdownOption(BaseModel):
@@ -37,6 +38,8 @@ class CourseOption(BaseModel):
 
 
 class ReportComponent(BaseModel):
+    component_id: str
+    status: str = "missing"
     occasion_name: str
     max_marks: Optional[float] = None
     marks: Optional[float] = None
@@ -63,6 +66,12 @@ class ReportStudentRow(BaseModel):
 
 
 class ResolvedFilters(BaseModel):
+    marks_source: Literal["lms", "ems"] = "lms"
+    academic_batch_name: Optional[str] = None
+    term_name: Optional[str] = None
+    start_range: Optional[float] = None
+    end_range: Optional[float] = None
+    include_absents: bool = False
     department_id: Optional[int] = None
     academic_batch_id: int
     crclm_term_id: Optional[int] = None
@@ -79,16 +88,27 @@ class ResolvedFilters(BaseModel):
 class ReportData(BaseModel):
     filters: ResolvedFilters
     rows: List[ReportStudentRow]
+    courses: List[ReportCourse] = Field(default_factory=list)
+
+
+class GraphAssessmentSummary(BaseModel):
+    component_id: str
+    occasion_name: str
+    max_marks: Optional[float] = None
+    student_count: int
+    absent_count: int
+    average_marks: Optional[float] = None
 
 
 class GraphCourseSummary(BaseModel):
+    assessments: List[GraphAssessmentSummary] = Field(default_factory=list)
     course_id: int
     course_code: str
     course_title: str
     student_count: int
-    average_marks: float
-    highest_marks: float
-    lowest_marks: float
+    average_marks: Optional[float] = None
+    highest_marks: Optional[float] = None
+    lowest_marks: Optional[float] = None
     min_passing_marks: Optional[float] = None
     pass_count: Optional[int] = None
     fail_count: Optional[int] = None
@@ -99,20 +119,10 @@ class GraphData(BaseModel):
     courses: List[GraphCourseSummary]
 
 
-class ExportRequest(BaseModel):
-    format: str = Field(default="excel", pattern="^(excel|pdf|csv)$")
-    department_id: Optional[int] = None
-    academic_batch_id: int
-    semester_id: Optional[int] = None
-    crclm_term_id: Optional[int] = None
-    section_id: Optional[int] = None
-    course_ids: Optional[List[int]] = None
-    include_total_marks: bool = True
-    from_date: Optional[date] = None
-    to_date: Optional[date] = None
-
-
 class ConsolidatedStudentMarksRequest(BaseModel):
+    start_range: Optional[float] = Field(default=None, ge=0, le=100)
+    end_range: Optional[float] = Field(default=None, ge=0, le=100)
+    include_absents: bool = False
     department_id: Optional[int] = None
     academic_batch_id: int
     semester_id: Optional[int] = Field(
@@ -121,13 +131,27 @@ class ConsolidatedStudentMarksRequest(BaseModel):
     )
     crclm_term_id: Optional[int] = Field(
         default=None,
-        description="UI term id from iems_crclm_term. Resolved internally to semester.",
+        description="Compatibility alias for the iems_semester semester_id.",
     )
     section_id: Optional[int] = None
     course_ids: Optional[List[int]] = None
     include_total_marks: bool = True
     from_date: Optional[date] = None
     to_date: Optional[date] = None
+
+    @model_validator(mode="after")
+    def validate_filters(self):
+        if (self.start_range is None) != (self.end_range is None):
+            raise ValueError("Select both marks range limits")
+        if self.start_range is not None and self.start_range > self.end_range:
+            raise ValueError("Marks start range cannot exceed end range")
+        if self.from_date is not None or self.to_date is not None:
+            raise ValueError("This report uses a marks range; date filters are not supported")
+        return self
+
+
+class ExportRequest(ConsolidatedStudentMarksRequest):
+    format: Literal["excel", "pdf", "csv"] = "excel"
 
 
 class DropdownListResponse(BaseModel):
@@ -170,16 +194,3 @@ class ConsolidatedStudentMarksGraphResponse(BaseModel):
     status: bool
     message: str
     data: GraphData
-
-
-class ExportPlaceholderData(BaseModel):
-    format: str
-    filters: ResolvedFilters
-    export_ready: bool
-    message: str
-
-
-class ExportPlaceholderResponse(BaseModel):
-    status: bool
-    message: str
-    data: ExportPlaceholderData

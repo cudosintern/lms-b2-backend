@@ -687,3 +687,17 @@ router.include_router(daily_class_report_router, prefix="/daily-class-report")
 
 from app.api.v1.lms_module.consolidated_attendance_report import router as consolidated_attendance_report_router
 router.include_router(consolidated_attendance_report_router)
+
+from app.api.v1.lms_module.student_registration_report import router as student_registration_report_router
+router.include_router(student_registration_report_router)
+
+from app.api.v1.lms_module.student_registration_oe_report import router as student_registration_oe_report_router
+router.include_router(student_registration_oe_report_router)
+
+
+from app.api.v1.lms_module.student_notification.router import router as student_notification_router
+router.include_router(student_notification_router)
+
+# Student quiz migration
+from app.api.v1.lms_module.student_quiz.student_quiz_routes import router as student_quiz_router
+router.include_router(student_quiz_router, prefix="/student-quiz", tags=["Student Quiz"] )

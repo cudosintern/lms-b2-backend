@@ -2,7 +2,7 @@ from io import BytesIO
 import os
 from xml.sax.saxutils import escape
 
-from fastapi import APIRouter, Depends, Header, HTTPException
+from fastapi import APIRouter, Depends, Header, HTTPException, Request
 from fastapi.responses import Response
 from fastapi.security import OAuth2PasswordBearer
 from jose import jwt, JWTError, ExpiredSignatureError
@@ -20,23 +20,48 @@ router = APIRouter(prefix="/course-registration-configuration", tags=["Course Re
 bearer = OAuth2PasswordBearer(tokenUrl="/api/v1/auth/staff_login", auto_error=False)
 
 
-def actor(token: str | None = Depends(bearer), org_id: int = Header(..., gt=0), db: Session = Depends(get_db)):
+def demo_identity(token, request, org_id):
+    if token != "demo-token-12345":
+        return None
+    enabled = os.getenv("COURSE_REGISTRATION_ALLOW_LOCAL_DEMO", "false").lower() == "true"
+    environments = [os.getenv(key, "").lower() for key in ("ENV", "APP_ENV", "ENVIRONMENT")]
+    development = environments[0] in {"development", "local"} and all(value in {"", "development", "local"} for value in environments)
+    loopback = request.client is not None and request.client.host in {"127.0.0.1", "::1"}
+    if not (enabled and development and loopback):
+        raise HTTPException(401, "Demo access is available only when explicitly enabled on the local development server.")
+    try:
+        user_id = int(os.environ["COURSE_REGISTRATION_DEMO_USER_ID"])
+        allowed_org = int(os.environ["COURSE_REGISTRATION_DEMO_ORG_ID"])
+        if user_id <= 0 or allowed_org <= 0:
+            raise ValueError()
+    except (KeyError, ValueError) as error:
+        raise HTTPException(503, "Configure a local demo staff user and organisation.") from error
+    if org_id != allowed_org:
+        raise HTTPException(403, "The demo session is limited to its configured organisation.")
+    return user_id
+
+
+def actor(request: Request, token: str | None = Depends(bearer), org_id: int = Header(..., gt=0), db: Session = Depends(get_db)):
     # Match app/api/auth/login.py; the shared auth_helper currently bypasses authentication.
     secret, algorithm = os.getenv("SECRET_KEY"), os.getenv("ALGORITHM")
     if not token:
         raise HTTPException(401, "No login token was sent. Please sign in again.", headers={"WWW-Authenticate": "Bearer"})
-    if not secret or not algorithm:
-        raise HTTPException(503, "JWT authentication is not configured.")
-    try:
-        claims = jwt.decode(token, secret, algorithms=[algorithm], options={"require_exp": True})
-        user_id = int(claims["id"])
-    except ExpiredSignatureError as error:
-        raise HTTPException(401, "Your login session has expired. Please sign in again.", headers={"WWW-Authenticate": "Bearer"}) from error
-    except (JWTError, KeyError, ValueError, TypeError) as error:
-        raise HTTPException(401, "The login token is invalid. Please sign in again.", headers={"WWW-Authenticate": "Bearer"}) from error
+    user_id = demo_identity(token, request, org_id)
+    if user_id is None:
+        if not secret or not algorithm:
+            raise HTTPException(503, "JWT authentication is not configured.")
+        try:
+            claims = jwt.decode(token, secret, algorithms=[algorithm], options={"require_exp": True})
+            user_id = int(claims["id"])
+        except ExpiredSignatureError as error:
+            raise HTTPException(401, "Your login session has expired. Please sign in again.", headers={"WWW-Authenticate": "Bearer"}) from error
+        except (JWTError, KeyError, ValueError, TypeError) as error:
+            raise HTTPException(401, "The login token is invalid. Please sign in again.", headers={"WWW-Authenticate": "Bearer"}) from error
     account = db.query(IEMSUsers).options(load_only(IEMSUsers.id, IEMSUsers.status, IEMSUsers.active,
         IEMSUsers.is_locked, IEMSUsers.org_id, IEMSUsers.super_admin, IEMSUsers.user_dept_id)).filter(IEMSUsers.id == user_id, IEMSUsers.status == 1).first()
-    if account is None or not account.active or account.is_locked:
+    # Legacy migrated accounts use status=1 with active=NULL. Explicit active=0
+    # is disabled; NULL is unspecified and follows the already-checked status.
+    if account is None or account.active == 0 or account.is_locked:
         raise HTTPException(403, "An active staff account is required.")
     if account.org_id != org_id and not db.query(IEMSUserOrg.user_id).filter(
             IEMSUserOrg.user_id == account.id, IEMSUserOrg.org_id == org_id).first():
@@ -80,7 +105,8 @@ def terms(batch_id: int, svc=Depends(service)):
     svc.batch(batch_id)
     rows = svc.db.query(IEMSemester).filter(IEMSemester.academic_batch_id == batch_id,
         IEMSemester.org_id == svc.actor["org_id"], IEMSemester.status == 1).order_by(IEMSemester.semester).all()
-    return [{"id": row.semester_id, "name": row.term_name or row.semester_desc or row.semester_code} for row in rows]
+    return [{"id": row.semester_id, "name": f"{row.semester} - Semester" if row.semester is not None
+        else row.term_name or row.semester_desc or row.semester_code} for row in rows]
 
 
 @router.get("/curricula/{batch_id}/terms/{term_id}")

@@ -13,12 +13,13 @@ from app.utils.http_return_helper import (
     returnSuccess,
     returnException
 )
-from app.utils.auth_helper import get_current_user
 
 from app.db.models import (
    IEMSAcademicBatch,
     IEMSemester,
     LMSMentorsGroup,
+    LMSGroupMentors,
+    LMSMapMentor,
     LMSMentorsGroupTerms,
     LMSGroupMentees,
     LMSMentoringSchedule,
@@ -85,7 +86,7 @@ def validate_attachment(file):
             "Only pdf, doc, docx, xls, xlsx, jpg, jpeg, png allowed"
         )
 
-    content = file.file.read()
+    content = file.file.read(MAX_FILE_SIZE + 1)
 
     if len(content) > MAX_FILE_SIZE:
         raise Exception(
@@ -233,7 +234,7 @@ def get_my_mentoring_schedules(
             if not group:
                 continue
 
-            if group.academic_batch_id != academic_batch_id:
+            if group_term.academic_batch_id != academic_batch_id:
                 continue
 
             sub_group = (
@@ -244,6 +245,24 @@ def get_my_mentoring_schedules(
                 )
                 .first()
             )
+
+            if not sub_group or sub_group.schedule_id != schedule.schedule_id:
+                continue
+            semester = db.query(IEMSemester).filter(
+                IEMSemester.semester_id == group_term.semester_id
+            ).first()
+            mentors = db.query(IEMSUsers).join(
+                LMSGroupMentors, LMSGroupMentors.mentor_id == IEMSUsers.id
+            ).filter(
+                LMSGroupMentors.mentors_group_terms_id == group_term.mentors_group_terms_id
+            ).all()
+            if not mentors:
+                mentors = db.query(IEMSUsers).join(
+                    LMSMapMentor, LMSMapMentor.mentor_id == IEMSUsers.id
+                ).filter(LMSMapMentor.mentors_group_id == group.mentors_group_id).all()
+            mentor_names = [" ".join(filter(None, [
+                mentor.first_name, mentor.last_name
+            ])) for mentor in mentors]
 
             dates = (
                 db.query(LMSMentoringSubGrpDate)
@@ -274,6 +293,13 @@ def get_my_mentoring_schedules(
                 result.append({
 
                     "schedule_id": schedule.schedule_id,
+                    "mentors_group_id": group.mentors_group_id,
+                    "sub_group_id": sub_group.sub_group_id,
+                    "sub_group_date_id": dt.sub_group_date_id,
+                    "status": dt.status,
+                    "semester_id": group_term.semester_id,
+                    "semester_name": (semester.semester_desc or semester.term_name or str(semester.semester)) if semester else "",
+                    "mentor_names": mentor_names,
 
                     "group_name": group.mentors_pgm_title,
 
@@ -520,7 +546,7 @@ def get_questionnaire(
 
             "questions": question_list
         }
-        print("Final Question List:", question_list)
+
 
         return returnSuccess(result)
 
@@ -530,309 +556,124 @@ def get_questionnaire(
 
 
 @router.post("/save_questionnaire_response")
-def save_questionnaire_response(
-    req: SaveQuestionnaireResponse,
-    db: Session = Depends(get_db)
-):
+def save_questionnaire_response(req: SaveQuestionnaireResponse, db: Session = Depends(get_db)):
     try:
-
-        # ==========================================================
-        # Validate Student
-        # ==========================================================
-
-        student = (
-            db.query(IEMStudents)
-            .filter(
-                IEMStudents.student_id == req.student_id
-            )
-            .first()
-        )
-
-        if not student:
-            return returnException("Invalid student.")
-
-        # ==========================================================
-        # Validate Schedule
-        # ==========================================================
-
-        schedule = (
-            db.query(LMSMentoringSchedule)
-            .filter(
-                LMSMentoringSchedule.schedule_id ==
-                req.schedule_id
-            )
-            .first()
-        )
-
+        if not db.query(IEMStudents).filter(IEMStudents.student_id == req.student_id).first():
+            raise ValueError("Invalid student.")
+        schedule = db.query(LMSMentoringSchedule).filter(
+            LMSMentoringSchedule.schedule_id == req.schedule_id
+        ).first()
         if not schedule:
-            return returnException("Invalid mentoring schedule.")
+            raise ValueError("Invalid mentoring schedule.")
+        date = db.query(LMSMentoringSubGrpDate).join(
+            LMSMentoringSubGroup,
+            LMSMentoringSubGroup.sub_group_id == LMSMentoringSubGrpDate.sub_group_id
+        ).join(LMSMapMenteeSchedule,
+            (LMSMapMenteeSchedule.sub_group_id == LMSMentoringSubGroup.sub_group_id) &
+            (LMSMapMenteeSchedule.schedule_id == LMSMentoringSubGroup.schedule_id)
+        ).filter(
+            LMSMentoringSubGrpDate.sub_group_date_id == req.sub_group_date_id,
+            LMSMentoringSubGroup.schedule_id == req.schedule_id,
+            LMSMapMenteeSchedule.student_id == req.student_id
+        ).first()
+        if not date:
+            raise ValueError("Student is not mapped to this session date.")
+        questions = db.query(LMSQuestionnairesQuestions).filter(
+            LMSQuestionnairesQuestions.questionnaire_id == schedule.questionnaire_id
+        ).all()
+        options = db.query(LMSQuestionnairesOptions).join(
+            LMSQuestionnairesQuestions,
+            LMSQuestionnairesQuestions.questionnaire_que_id == LMSQuestionnairesOptions.questionnaire_que_id
+        ).filter(LMSQuestionnairesQuestions.questionnaire_id == schedule.questionnaire_id).all()
+        validate_answers(questions, options, req.answers)
 
-        # ==========================================================
-        # Validate Student Mapping
-        # ==========================================================
-
-        mapping = (
-            db.query(LMSMapMenteeSchedule)
-            .filter(
-                LMSMapMenteeSchedule.schedule_id ==
-                req.schedule_id,
-
-                LMSMapMenteeSchedule.student_id ==
-                req.student_id
-            )
-            .first()
-        )
-
-        if not mapping:
-            return returnException(
-                "Student is not mapped to this mentoring schedule."
-            )
-
-        # ==========================================================
-        # CHECK IF RESPONSE ALREADY EXISTS - UPDATE INSTEAD OF REJECT
-        # ==========================================================
-
-        existing_response = (
-            db.query(LMSMenteeQuestionnaireResponse)
-            .filter(
-                LMSMenteeQuestionnaireResponse.student_id == req.student_id,
-                LMSMenteeQuestionnaireResponse.schedule_id == req.schedule_id
-            )
-            .first()
-        )
-
-        if existing_response:
-            # ==========================================================
-            # DELETE existing answers and options
-            # ==========================================================
-            
-            # Get all question response IDs for this response
-            question_responses = (
-                db.query(LMSMenteeQuestionnaireResponseQue)
-                .filter(
-                    LMSMenteeQuestionnaireResponseQue.questionnaire_response_id == 
-                    existing_response.questionnaire_response_id
-                )
-                .all()
-            )
-            
-            # Delete option responses for each question response
-            for qr in question_responses:
+        # Validate everything before replacing any existing response.
+        response = db.query(LMSMenteeQuestionnaireResponse).filter(
+            LMSMenteeQuestionnaireResponse.student_id == req.student_id,
+            LMSMenteeQuestionnaireResponse.schedule_id == req.schedule_id
+        ).with_for_update().first()
+        if response:
+            old_answers = db.query(LMSMenteeQuestionnaireResponseQue).filter(
+                LMSMenteeQuestionnaireResponseQue.questionnaire_response_id == response.questionnaire_response_id
+            ).all()
+            for old in old_answers:
                 db.query(LMSMenteeQuestionnaireResponseOption).filter(
-                    LMSMenteeQuestionnaireResponseOption.questionnaire_response_que_id == 
-                    qr.questionnaire_response_que_id
-                ).delete()
-            
-            # Delete question responses
-            db.query(LMSMenteeQuestionnaireResponseQue).filter(
-                LMSMenteeQuestionnaireResponseQue.questionnaire_response_id == 
-                existing_response.questionnaire_response_id
-            ).delete()
-            
-            # Update the existing response header
-            existing_response.modified_by = req.student_id
-            existing_response.modified_date = datetime.now()
-            
-            response_id = existing_response.questionnaire_response_id
-            
+                    LMSMenteeQuestionnaireResponseOption.questionnaire_response_que_id == old.questionnaire_response_que_id
+                ).delete(synchronize_session=False)
+                db.delete(old)
+            db.flush()
         else:
-            # ==========================================================
-            # Create NEW Questionnaire Response Header
-            # ==========================================================
             response = LMSMenteeQuestionnaireResponse(
-                student_id=req.student_id,
-                schedule_id=req.schedule_id,
-                questionnaire_id=schedule.questionnaire_id,
-                sub_group_date_id=req.sub_group_date_id,
-                created_date=datetime.now(),
-                created_by=req.student_id,
-                modified_by=req.student_id
+                student_id=req.student_id, schedule_id=req.schedule_id,
+                questionnaire_id=schedule.questionnaire_id, created_by=req.student_id
             )
             db.add(response)
-            db.flush()
-            response_id = response.questionnaire_response_id
-
-        # ==========================================================
-        # Validate Every Question
-        # ==========================================================
-
+        response.sub_group_date_id = req.sub_group_date_id
+        response.sub_group_id = date.sub_group_id
+        response.modified_by = req.student_id
+        response.modified_date = datetime.now()
+        db.flush()
         for answer in req.answers:
-
-            question_data = (
-                db.query(
-                    LMSQuestionnairesQuestions,
-                    LMSQuestionType
-                )
-                .join(
-                    LMSQuestionType,
-                    LMSQuestionType.que_type_id ==
-                    LMSQuestionnairesQuestions.que_type_id
-                )
-                .filter(
-                    LMSQuestionnairesQuestions.questionnaire_que_id ==
-                    answer.questionnaire_que_id
-                )
-                .first()
+            row = LMSMenteeQuestionnaireResponseQue(
+                questionnaire_response_id=response.questionnaire_response_id,
+                questionnaire_que_id=answer.questionnaire_que_id,
+                text_answer=answer.text_answer.strip() if answer.text_answer else None,
+                created_by=req.student_id, modified_by=req.student_id
             )
-
-            if not question_data:
-
-                return returnException(
-                    f"Invalid Question : {answer.questionnaire_que_id}"
-                )
-
-            question, question_type = question_data
-
-            # ===========================================
-            # Mandatory Validation
-            # ===========================================
-
-            if question.que_is_mandatory:
-
-                if question_type.que_type_id == 3:
-
-                    if (
-                        answer.text_answer is None
-                        or
-                        answer.text_answer.strip() == ""
-                    ):
-
-                        return returnException(
-                            f"Question {question.que_no} is mandatory."
-                        )
-
-                else:
-
-                    if len(answer.selected_option_ids) == 0:
-
-                        return returnException(
-                            f"Question {question.que_no} is mandatory."
-                        )
-
-            # ===========================================
-            # Single Select Validation
-            # ===========================================
-
-            if question_type.que_type_id == 1:
-
-                if len(answer.selected_option_ids) > 1:
-
-                    return returnException(
-                        f"Question {question.que_no} allows only one option."
-                    )
-
-            # ===========================================
-            # Validate Selected Options
-            # ===========================================
-
-            if question_type.que_type_id != 3:
-
-                for option_id in answer.selected_option_ids:
-
-                    option = (
-                        db.query(
-                            LMSQuestionnairesOptions
-                        )
-                        .filter(
-                            LMSQuestionnairesOptions.questionnaire_options_id ==
-                            option_id,
-
-                            LMSQuestionnairesOptions.questionnaire_que_id ==
-                            question.questionnaire_que_id
-                        )
-                        .first()
-                    )
-
-                    if not option:
-
-                        return returnException(
-                            f"Invalid option selected for Question {question.que_no}"
-                        )
-
-        # ==========================================================
-        # Save Question Answers
-        # ==========================================================
-
-        for answer in req.answers:
-
-            question = (
-                db.query(LMSQuestionnairesQuestions)
-                .filter(
-                    LMSQuestionnairesQuestions.questionnaire_que_id ==
-                    answer.questionnaire_que_id
-                )
-                .first()
-            )
-
-            question_response = LMSMenteeQuestionnaireResponseQue(
-
-                questionnaire_response_id=response_id,
-
-                questionnaire_que_id=question.questionnaire_que_id,
-
-                text_answer=answer.text_answer,
-
-                created_by=req.student_id,
-
-                modified_by=req.student_id
-
-            )
-
-            db.add(question_response)
-
+            db.add(row)
             db.flush()
-
-            question_response_id = (
-                question_response.questionnaire_response_que_id
-            )
-
-            # ================================================
-            # Save Selected Options
-            # ================================================
-
-            if len(answer.selected_option_ids) > 0:
-
-                for option_id in answer.selected_option_ids:
-
-                    option_response = (
-                        LMSMenteeQuestionnaireResponseOption(
-
-                            questionnaire_response_que_id=
-                                question_response_id,
-
-                            questionnaire_options_id=
-                                option_id,
-
-                            created_by=req.student_id,
-
-                            modified_by=req.student_id
-
-                        )
-                    )
-
-                    db.add(option_response)
-
-        # ==========================================================
-        # Commit Transaction
-        # ==========================================================
-
+            for option_id in answer.selected_option_ids:
+                db.add(LMSMenteeQuestionnaireResponseOption(
+                    questionnaire_response_que_id=row.questionnaire_response_que_id,
+                    questionnaire_options_id=option_id,
+                    specification=answer.specifications.get(option_id, "").strip() or None,
+                    created_by=req.student_id, modified_by=req.student_id
+                ))
         db.commit()
-
-        return returnSuccess(
-            "Questionnaire submitted successfully."
-        )
-
+        return returnSuccess("Questionnaire submitted successfully.")
     except Exception as e:
-
         db.rollback()
-
         return returnException(str(e))
-    
+
+
+def validate_answers(questions, options, answers):
+    question_map = {q.questionnaire_que_id: q for q in questions}
+    option_map = {o.questionnaire_options_id: o for o in options}
+    answer_map = {a.questionnaire_que_id: a for a in answers}
+    if len(answer_map) != len(answers):
+        raise ValueError("Duplicate question answers are not allowed.")
+    if set(answer_map) - set(question_map):
+        raise ValueError("An answer does not belong to this questionnaire.")
+    for qid, question in question_map.items():
+        answer = answer_map.get(qid)
+        selected = answer.selected_option_ids if answer else []
+        text = (answer.text_answer or "").strip() if answer else ""
+        mandatory = str(question.que_is_mandatory).lower() in ("1", "true")
+        if question.que_type_id not in (1, 2, 3):
+            raise ValueError(f"Unsupported type for Question {question.que_no}.")
+        if mandatory and not (text if question.que_type_id == 3 else selected):
+            raise ValueError(f"Question {question.que_no} is mandatory.")
+        if len(selected) != len(set(selected)):
+            raise ValueError("Duplicate options are not allowed.")
+        if question.que_type_id == 1 and len(selected) > 1:
+            raise ValueError(f"Question {question.que_no} allows only one option.")
+        if (question.que_type_id == 3 and selected) or (question.que_type_id != 3 and text):
+            raise ValueError(f"Invalid answer type for Question {question.que_no}.")
+        for oid in selected:
+            option = option_map.get(oid)
+            if not option or option.questionnaire_que_id != qid:
+                raise ValueError(f"Invalid option for Question {question.que_no}.")
+            if mandatory and str(option.specify_flag).lower() in ("1", "true") and not answer.specifications.get(oid, "").strip():
+                raise ValueError(f"Please specify your answer for Question {question.que_no}.")
+        if answer and set(answer.specifications) - set(selected):
+            raise ValueError("Specifications must refer to selected options.")
+
+
 @router.post("/save_group_comment")
 def save_group_comment(
     schedule_id: int = Form(...),
     student_id: int = Form(...),
-    comment: str = Form(...),
+    comment: str = Form(""),
     suggestion_type: int = Form(0),
     attachment: UploadFile = File(None),
     db: Session = Depends(get_db)
@@ -891,9 +732,11 @@ def save_group_comment(
         # --------------------------------------------------
         # Validate Attachment
         # --------------------------------------------------
-        validate_attachment(
-            attachment
-        )
+        if not comment.strip() and not attachment:
+            raise ValueError("Enter a comment or select an attachment.")
+        if suggestion_type not in (0, 1):
+            raise ValueError("Invalid suggestion type.")
+        validate_attachment(attachment)
 
         file_name = save_uploaded_file(
             attachment
@@ -969,7 +812,7 @@ def save_group_comment(
 def save_individual_comment(
     schedule_id: int = Form(...),
     student_id: int = Form(...),
-    comment: str = Form(...),
+    comment: str = Form(""),
     suggestion_type: int = Form(0),
     attachment: UploadFile = File(None),
     db: Session = Depends(get_db)
@@ -1028,9 +871,11 @@ def save_individual_comment(
         # --------------------------------------------------
         # Validate Attachment
         # --------------------------------------------------
-        validate_attachment(
-            attachment
-        )
+        if not comment.strip() and not attachment:
+            raise ValueError("Enter a comment or select an attachment.")
+        if suggestion_type not in (0, 1):
+            raise ValueError("Invalid suggestion type.")
+        validate_attachment(attachment)
 
         file_name = save_uploaded_file(
             attachment
@@ -1408,4 +1253,77 @@ def get_individual_comments(
 
     except Exception as e:
 
+        return returnException(str(e))
+
+# JSON fetch endpoints keep student_id explicit during demo integration.
+# Existing GET endpoints are retained for existing API clients.
+@router.post("/get_student_academic_batches")
+def fetch_student_batches(req: StudentRequest, db: Session = Depends(get_db)):
+    return get_student_academic_batches(req.student_id, db)
+
+
+@router.post("/get_my_mentoring_schedules")
+def fetch_student_schedules(req: ScheduleListRequest, db: Session = Depends(get_db)):
+    import calendar
+    from datetime import date
+    try:
+        year, month = map(int, req.month.split("-"))
+        first = date(year, month, 1)
+        last = date(year, month, calendar.monthrange(year, month)[1])
+        result = get_my_mentoring_schedules(req.academic_batch_id, req.student_id, db)
+        if not isinstance(result, dict):
+            return result
+        rows = [row for row in result["data"] if row["start_date"] and row["end_date"]
+                and row["start_date"] <= last and row["end_date"] >= first]
+        rows = list({row["sub_group_date_id"]: row for row in rows}.values())
+        rows.sort(key=lambda row: (row["start_date"], row["sub_group_date_id"]), reverse=True)
+        return returnSuccess(rows)
+    except Exception as e:
+        return returnException(str(e))
+
+
+@router.post("/get_questionnaire")
+def fetch_student_questionnaire(req: SessionRequest, db: Session = Depends(get_db)):
+    return get_questionnaire(req.schedule_id, req.student_id, db)
+
+
+@router.post("/get_group_comments")
+def fetch_student_group_comments(req: SessionRequest, db: Session = Depends(get_db)):
+    return get_group_comments(req.schedule_id, req.student_id, db)
+
+
+@router.post("/get_individual_comments")
+def fetch_student_individual_comments(req: SessionRequest, db: Session = Depends(get_db)):
+    return get_individual_comments(req.schedule_id, req.student_id, db)
+
+
+@router.post("/delete_group_attachment")
+def delete_group_attachment(req: DeleteAttachmentRequest, db: Session = Depends(get_db)):
+    try:
+        mapped = db.query(LMSMapMenteeSchedule).filter(
+            LMSMapMenteeSchedule.schedule_id == req.schedule_id,
+            LMSMapMenteeSchedule.student_id == req.student_id
+        ).first()
+        if not mapped:
+            raise ValueError("Student is not mapped to this mentoring schedule.")
+        row = db.query(LMSMMPSessionSuggestionGenericComments).join(
+            LMSMMPSessionSuggestion,
+            LMSMMPSessionSuggestion.session_suggestion_id == LMSMMPSessionSuggestionGenericComments.session_suggestion_id
+        ).filter(
+            LMSMMPSessionSuggestion.schedule_id == req.schedule_id,
+            LMSMMPSessionSuggestionGenericComments.generic_comment_id == req.generic_comment_id,
+            LMSMMPSessionSuggestionGenericComments.created_by == req.student_id,
+            LMSMMPSessionSuggestionGenericComments.user_type == 2
+        ).first()
+        if not row or not row.attachment:
+            raise ValueError("Attachment not found or not owned by this student.")
+        # Unlink the attachment; do not delete potentially shared files from disk.
+        row.attachment = None
+        row.modified_by = req.student_id
+        if not (row.comment or "").strip():
+            db.delete(row)
+        db.commit()
+        return returnSuccess("Attachment removed.")
+    except Exception as e:
+        db.rollback()
         return returnException(str(e))
